@@ -427,3 +427,32 @@ func TestAdminRuleRejectsBadInput(t *testing.T) {
 		})
 	}
 }
+
+// A fresh database must hold exactly what the brief describes: seven items at
+// their prices, a 5% pair rule for Orange, Pink and Green, and 10% for members.
+func TestFreshDatabaseMatchesTheBrief(t *testing.T) {
+	app := newTestApp(t)
+
+	_, menuRaw := adminRequest(t, app, http.MethodGet, "/api/admin/menu", "")
+	wantMenu := `[` +
+		`{"code":"RED","name":"Red set","price":5000,"active":true},` +
+		`{"code":"GREEN","name":"Green set","price":4000,"active":true},` +
+		`{"code":"BLUE","name":"Blue set","price":3000,"active":true},` +
+		`{"code":"YELLOW","name":"Yellow set","price":5000,"active":true},` +
+		`{"code":"PINK","name":"Pink set","price":8000,"active":true},` +
+		`{"code":"PURPLE","name":"Purple set","price":9000,"active":true},` +
+		`{"code":"ORANGE","name":"Orange set","price":12000,"active":true}]`
+	if menuRaw != wantMenu {
+		t.Errorf("menu = %s\nwant   %s", menuRaw, wantMenu)
+	}
+
+	_, rulesRaw := adminRequest(t, app, http.MethodGet, "/api/admin/rules", "")
+	wantRules := `[` +
+		`{"id":1,"name":"pairs","itemCode":"ORANGE","groupSize":2,"percent":5,"memberOnly":false,"active":true},` +
+		`{"id":2,"name":"pairs","itemCode":"PINK","groupSize":2,"percent":5,"memberOnly":false,"active":true},` +
+		`{"id":3,"name":"pairs","itemCode":"GREEN","groupSize":2,"percent":5,"memberOnly":false,"active":true},` +
+		`{"id":4,"name":"Member 10%","itemCode":"","groupSize":0,"percent":10,"memberOnly":true,"active":true}]`
+	if rulesRaw != wantRules {
+		t.Errorf("rules = %s\nwant   %s", rulesRaw, wantRules)
+	}
+}
