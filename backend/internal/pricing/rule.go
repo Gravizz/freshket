@@ -71,3 +71,8 @@ func Discounts(rules []Rule) []Discount {
 	}
 	return out
 }
+
+// percentOf returns percent% of amount, rounding half-up to a whole satang.
+func percentOf(amount Money, percent int64) Money {
+	return (amount*Money(percent) + 50) / 100
+}

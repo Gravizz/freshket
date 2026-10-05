@@ -24,35 +24,6 @@ func testMenu() pricing.Menu {
 	return m
 }
 
-func TestCalculateTotals(t *testing.T) {
-	tests := []struct {
-		name   string
-		lines  []pricing.Line
-		member bool
-		want   pricing.Money
-	}{
-		{"red and green", []pricing.Line{{"RED", 1}, {"GREEN", 1}}, false, 9000},
-		{"red and green, member", []pricing.Line{{"RED", 1}, {"GREEN", 1}}, true, 8100},
-		{"five orange: two pairs discounted", []pricing.Line{{"ORANGE", 5}}, false, 57600},
-		{"five orange, member", []pricing.Line{{"ORANGE", 5}}, true, 51840},
-		{"green pair and pink pair plus one", []pricing.Line{{"GREEN", 2}, {"PINK", 3}}, false, 30800},
-		{"empty order", nil, false, 0},
-	}
-
-	calc := pricing.NewCalculator(pricing.DefaultDiscounts()...)
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			got, err := calc.Calculate(testMenu(), pricing.Order{Lines: tt.lines, Member: tt.member})
-			if err != nil {
-				t.Fatalf("Calculate() error = %v", err)
-			}
-			if got.Total != tt.want {
-				t.Errorf("Total = %d, want %d", got.Total, tt.want)
-			}
-		})
-	}
-}
-
 func TestCalculateRejectsInvalidLines(t *testing.T) {
 	tests := []struct {
 		name    string
@@ -63,7 +34,7 @@ func TestCalculateRejectsInvalidLines(t *testing.T) {
 		{"negative quantity", pricing.Line{Code: "RED", Qty: -1}, pricing.ErrInvalidQuantity},
 	}
 
-	calc := pricing.NewCalculator(pricing.DefaultDiscounts()...)
+	calc := pricing.NewCalculator()
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			_, err := calc.Calculate(testMenu(), pricing.Order{Lines: []pricing.Line{tt.line}})

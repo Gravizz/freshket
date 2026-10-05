@@ -11,7 +11,7 @@ import (
 
 	"github.com/gravizz/freshket/backend/internal/httpapi"
 	"github.com/gravizz/freshket/backend/internal/menu"
-	"github.com/gravizz/freshket/backend/internal/pricing"
+	"github.com/gravizz/freshket/backend/internal/rules"
 )
 
 func main() {
@@ -24,12 +24,15 @@ func main() {
 	}
 	defer db.Close()
 
-	repo := menu.NewRepository(db)
-	if err := repo.Migrate(context.Background()); err != nil {
-		log.Fatalf("migrate: %v", err)
+	menuRepo, rulesRepo := menu.NewRepository(db), rules.NewRepository(db)
+	if err := menuRepo.Migrate(context.Background()); err != nil {
+		log.Fatalf("migrate menu: %v", err)
+	}
+	if err := rulesRepo.Migrate(context.Background()); err != nil {
+		log.Fatalf("migrate rules: %v", err)
 	}
 
-	app := httpapi.New(repo, pricing.NewCalculator(pricing.DefaultDiscounts()...))
+	app := httpapi.New(menuRepo, rulesRepo)
 	log.Fatal(app.Listen(addr))
 }
 

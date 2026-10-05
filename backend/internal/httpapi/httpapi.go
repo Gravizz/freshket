@@ -40,14 +40,19 @@ type calculateResponse struct {
 	Total     int64         `json:"total"`
 }
 
+// RuleStore lists the discount rules that currently apply.
+type RuleStore interface {
+	ListActive(ctx context.Context) ([]pricing.Rule, error)
+}
+
 type handler struct {
-	menu MenuStore
-	calc *pricing.Calculator
+	menu  MenuStore
+	rules RuleStore
 }
 
 // New returns a Fiber app serving /api/menu and /api/orders/calculate.
-func New(menu MenuStore, calc *pricing.Calculator) *fiber.App {
-	h := &handler{menu: menu, calc: calc}
+func New(menu MenuStore, rules RuleStore) *fiber.App {
+	h := &handler{menu: menu, rules: rules}
 	app := fiber.New()
 	api := app.Group("/api")
 	api.Get("/menu", h.listMenu)
@@ -87,7 +92,12 @@ func (h *handler) calculate(c fiber.Ctx) error {
 		order.Lines = append(order.Lines, pricing.Line{Code: it.Code, Qty: it.Qty})
 	}
 
-	b, err := h.calc.Calculate(menu, order)
+	active, err := h.rules.ListActive(c.Context())
+	if err != nil {
+		return err
+	}
+
+	b, err := pricing.NewCalculator(pricing.Discounts(active)...).Calculate(menu, order)
 	if errors.Is(err, pricing.ErrUnknownItem) || errors.Is(err, pricing.ErrInvalidQuantity) {
 		return fiber.NewError(fiber.StatusBadRequest, err.Error())
 	}

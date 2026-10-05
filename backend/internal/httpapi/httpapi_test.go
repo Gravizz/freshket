@@ -16,7 +16,7 @@ import (
 
 	"github.com/gravizz/freshket/backend/internal/httpapi"
 	"github.com/gravizz/freshket/backend/internal/menu"
-	"github.com/gravizz/freshket/backend/internal/pricing"
+	"github.com/gravizz/freshket/backend/internal/rules"
 )
 
 func newTestApp(t *testing.T) *fiber.App {
@@ -28,11 +28,13 @@ func newTestApp(t *testing.T) *fiber.App {
 	db.SetMaxOpenConns(1) // every connection to :memory: is a separate database
 	t.Cleanup(func() { db.Close() })
 
-	repo := menu.NewRepository(db)
-	if err := repo.Migrate(context.Background()); err != nil {
-		t.Fatal(err)
+	menuRepo, rulesRepo := menu.NewRepository(db), rules.NewRepository(db)
+	for _, migrate := range []func(context.Context) error{menuRepo.Migrate, rulesRepo.Migrate} {
+		if err := migrate(context.Background()); err != nil {
+			t.Fatal(err)
+		}
 	}
-	return httpapi.New(repo, pricing.NewCalculator(pricing.DefaultDiscounts()...))
+	return httpapi.New(menuRepo, rulesRepo)
 }
 
 func TestListMenu(t *testing.T) {
@@ -169,5 +171,30 @@ func TestCalculateRejectsBadInput(t *testing.T) {
 				t.Errorf("status = %d, want 400: %s", resp.StatusCode, raw)
 			}
 		})
+	}
+}
+
+func TestMigrationsAreIdempotent(t *testing.T) {
+	db, err := sql.Open("sqlite", ":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	db.SetMaxOpenConns(1)
+	t.Cleanup(func() { db.Close() })
+
+	menuRepo, rulesRepo := menu.NewRepository(db), rules.NewRepository(db)
+	for i := 0; i < 2; i++ { // a restart runs the migrations again
+		if err := menuRepo.Migrate(context.Background()); err != nil {
+			t.Fatal(err)
+		}
+		if err := rulesRepo.Migrate(context.Background()); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	resp, raw := postCalculate(t, httpapi.New(menuRepo, rulesRepo), `{"items":[{"code":"ORANGE","qty":5}],"member":true}`)
+
+	if resp.StatusCode != http.StatusOK || !strings.Contains(raw, `"total":51840`) || strings.Count(raw, `"label"`) != 2 {
+		t.Errorf("body = %s, want total 51840 with exactly two discounts", raw)
 	}
 }
