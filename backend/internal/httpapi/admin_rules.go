@@ -12,19 +12,36 @@ import (
 	"github.com/gravizz/freshket/backend/internal/rules"
 )
 
+type bundleItemDTO struct {
+	ItemCode string `json:"itemCode"`
+	Qty      int    `json:"qty"`
+}
+
+// ruleDTO is a rule on the wire. An empty bundle is a whole-order rule.
 type ruleDTO struct {
-	ID         int64  `json:"id"`
-	Name       string `json:"name"`
-	ItemCode   string `json:"itemCode"`
-	GroupSize  int    `json:"groupSize"`
-	Percent    int    `json:"percent"`
-	MemberOnly bool   `json:"memberOnly"`
-	Active     bool   `json:"active"`
+	ID         int64           `json:"id"`
+	Name       string          `json:"name"`
+	Bundle     []bundleItemDTO `json:"bundle"`
+	Percent    int             `json:"percent"`
+	MemberOnly bool            `json:"memberOnly"`
+	Active     bool            `json:"active"`
+}
+
+func newRuleDTO(r pricing.Rule) ruleDTO {
+	d := ruleDTO{ID: r.ID, Name: r.Name, Bundle: make([]bundleItemDTO, 0, len(r.Bundle)),
+		Percent: r.Percent, MemberOnly: r.MemberOnly, Active: r.Active}
+	for _, c := range r.Bundle {
+		d.Bundle = append(d.Bundle, bundleItemDTO{ItemCode: c.ItemCode, Qty: c.Qty})
+	}
+	return d
 }
 
 func (d ruleDTO) rule() pricing.Rule {
-	return pricing.Rule{ID: d.ID, Name: d.Name, ItemCode: d.ItemCode, GroupSize: d.GroupSize,
-		Percent: d.Percent, MemberOnly: d.MemberOnly, Active: d.Active}
+	r := pricing.Rule{ID: d.ID, Name: d.Name, Percent: d.Percent, MemberOnly: d.MemberOnly, Active: d.Active}
+	for _, c := range d.Bundle {
+		r.Bundle = append(r.Bundle, pricing.Component{ItemCode: c.ItemCode, Qty: c.Qty})
+	}
+	return r
 }
 
 func (h *handler) listRules(c fiber.Ctx) error {
@@ -34,8 +51,7 @@ func (h *handler) listRules(c fiber.Ctx) error {
 	}
 	out := make([]ruleDTO, 0, len(all))
 	for _, r := range all {
-		out = append(out, ruleDTO{ID: r.ID, Name: r.Name, ItemCode: r.ItemCode, GroupSize: r.GroupSize,
-			Percent: r.Percent, MemberOnly: r.MemberOnly, Active: r.Active})
+		out = append(out, newRuleDTO(r))
 	}
 	return c.JSON(out)
 }
@@ -62,24 +78,28 @@ func (h *handler) updateRule(c fiber.Ctx) error {
 	return c.JSON(body)
 }
 
-// checkRule validates the rule and that its item, if any, is on the menu.
+// checkRule validates the rule and that every item of its bundle is on the menu.
 func (h *handler) checkRule(ctx context.Context, r pricing.Rule) error {
 	if err := r.Validate(); err != nil {
 		return fiber.NewError(fiber.StatusBadRequest, err.Error())
 	}
-	if r.ItemCode == "" {
+	if len(r.Bundle) == 0 {
 		return nil
 	}
 	items, err := h.menu.ListAll(ctx)
 	if err != nil {
 		return err
 	}
+	known := make(map[string]bool, len(items))
 	for _, it := range items {
-		if it.Code == r.ItemCode {
-			return nil
+		known[it.Code] = true
+	}
+	for _, c := range r.Bundle {
+		if !known[c.ItemCode] {
+			return fiber.NewError(fiber.StatusBadRequest, fmt.Sprintf("%v: unknown item %q", pricing.ErrInvalidRule, c.ItemCode))
 		}
 	}
-	return fiber.NewError(fiber.StatusBadRequest, fmt.Sprintf("%v: unknown item %q", pricing.ErrInvalidRule, r.ItemCode))
+	return nil
 }
 
 func (h *handler) createRule(c fiber.Ctx) error {
@@ -94,6 +114,5 @@ func (h *handler) createRule(c fiber.Ctx) error {
 	if err != nil {
 		return err
 	}
-	body.ID = created.ID
-	return c.Status(fiber.StatusCreated).JSON(body)
+	return c.Status(fiber.StatusCreated).JSON(newRuleDTO(created))
 }

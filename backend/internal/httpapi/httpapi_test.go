@@ -319,7 +319,7 @@ func TestAdminAddedRuleChangesPricingWithoutRestart(t *testing.T) {
 	app := newTestApp(t)
 
 	resp, raw := adminRequest(t, app, http.MethodPost, "/api/admin/rules",
-		`{"name":"triple","itemCode":"BLUE","groupSize":3,"percent":10,"memberOnly":false,"active":true}`)
+		`{"name":"triple","bundle":[{"itemCode":"BLUE","qty":3}],"percent":10,"memberOnly":false,"active":true}`)
 	if resp.StatusCode != http.StatusCreated {
 		t.Fatalf("create status = %d, want 201: %s", resp.StatusCode, raw)
 	}
@@ -341,8 +341,8 @@ func TestAdminAddedRuleChangesPricingWithoutRestart(t *testing.T) {
 	if err := json.Unmarshal([]byte(calcRaw), &got); err != nil {
 		t.Fatal(err)
 	}
-	if len(got.Discounts) != 1 || got.Discounts[0].Amount != 900 || got.Discounts[0].Label != "Blue set triple ×1 (10%)" || got.Total != 8100 {
-		t.Errorf("calculate = %s, want one discount of 900 labelled \"Blue set triple ×1 (10%%)\" and total 8100", calcRaw)
+	if len(got.Discounts) != 1 || got.Discounts[0].Amount != 900 || got.Discounts[0].Label != "triple ×1 (10%)" || got.Total != 8100 {
+		t.Errorf("calculate = %s, want one discount of 900 labelled \"triple ×1 (10%%)\" and total 8100", calcRaw)
 	}
 }
 
@@ -366,7 +366,7 @@ func TestAdminDeactivatedRuleStopsApplying(t *testing.T) {
 	}
 
 	resp, raw := adminRequest(t, app, http.MethodPut, fmt.Sprintf("/api/admin/rules/%d", memberID),
-		`{"name":"Member 10%","itemCode":"","groupSize":0,"percent":10,"memberOnly":true,"active":false}`)
+		`{"name":"Member 10%","bundle":[],"percent":10,"memberOnly":true,"active":false}`)
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("update status = %d, want 200: %s", resp.StatusCode, raw)
 	}
@@ -377,11 +377,11 @@ func TestAdminDeactivatedRuleStopsApplying(t *testing.T) {
 	}
 }
 
-func TestAdminRuleWithoutItemAppliesToWholeOrder(t *testing.T) {
+func TestAdminRuleWithEmptyBundleAppliesToWholeOrder(t *testing.T) {
 	app := newTestApp(t)
 
 	resp, raw := adminRequest(t, app, http.MethodPost, "/api/admin/rules",
-		`{"name":"Welcome 5%","itemCode":"","groupSize":0,"percent":5,"memberOnly":false,"active":true}`)
+		`{"name":"Welcome 5%","bundle":[],"percent":5,"memberOnly":false,"active":true}`)
 	if resp.StatusCode != http.StatusCreated {
 		t.Fatalf("create status = %d, want 201: %s", resp.StatusCode, raw)
 	}
@@ -395,7 +395,7 @@ func TestAdminRuleWithoutItemAppliesToWholeOrder(t *testing.T) {
 func TestRuleForDeactivatedItemDoesNotBreakOtherOrders(t *testing.T) {
 	app := newTestApp(t)
 	adminRequest(t, app, http.MethodPost, "/api/admin/rules",
-		`{"name":"triple","itemCode":"BLUE","groupSize":3,"percent":10,"memberOnly":false,"active":true}`)
+		`{"name":"triple","bundle":[{"itemCode":"BLUE","qty":3}],"percent":10,"memberOnly":false,"active":true}`)
 	adminRequest(t, app, http.MethodPut, "/api/admin/menu/BLUE", `{"name":"Blue set","price":3000,"active":false}`)
 
 	resp, calcRaw := postCalculate(t, app, `{"items":[{"code":"RED","qty":1}]}`)
@@ -413,19 +413,21 @@ func TestAdminRuleRejectsBadInput(t *testing.T) {
 		name, method, path, body string
 		want                     int
 	}{
-		{"percent zero", http.MethodPost, "/api/admin/rules", `{"name":"x","itemCode":"RED","groupSize":2,"percent":0,"active":true}`, http.StatusBadRequest},
-		{"percent over 100", http.MethodPost, "/api/admin/rules", `{"name":"x","itemCode":"RED","groupSize":2,"percent":101,"active":true}`, http.StatusBadRequest},
-		{"item rule without group size", http.MethodPost, "/api/admin/rules", `{"name":"x","itemCode":"RED","groupSize":0,"percent":5,"active":true}`, http.StatusBadRequest},
-		{"group size above the quantity limit", http.MethodPost, "/api/admin/rules", `{"name":"x","itemCode":"RED","groupSize":10001,"percent":5,"active":true}`, http.StatusBadRequest},
-		{"order rule with a group size", http.MethodPost, "/api/admin/rules", `{"name":"x","itemCode":"","groupSize":3,"percent":5,"active":true}`, http.StatusBadRequest},
-		{"empty name", http.MethodPost, "/api/admin/rules", `{"name":"","itemCode":"RED","groupSize":2,"percent":5,"active":true}`, http.StatusBadRequest},
-		{"unknown item", http.MethodPost, "/api/admin/rules", `{"name":"x","itemCode":"NOPE","groupSize":2,"percent":5,"active":true}`, http.StatusBadRequest},
-		{"percent is a string", http.MethodPost, "/api/admin/rules", `{"name":"x","itemCode":"RED","groupSize":2,"percent":"ten","active":true}`, http.StatusBadRequest},
+		{"percent zero", http.MethodPost, "/api/admin/rules", `{"name":"x","bundle":[{"itemCode":"RED","qty":2}],"percent":0,"active":true}`, http.StatusBadRequest},
+		{"percent over 100", http.MethodPost, "/api/admin/rules", `{"name":"x","bundle":[{"itemCode":"RED","qty":2}],"percent":101,"active":true}`, http.StatusBadRequest},
+		{"group size above the quantity limit", http.MethodPost, "/api/admin/rules", `{"name":"x","bundle":[{"itemCode":"RED","qty":10001}],"percent":5,"active":true}`, http.StatusBadRequest},
+		{"empty name", http.MethodPost, "/api/admin/rules", `{"name":"","bundle":[{"itemCode":"RED","qty":2}],"percent":5,"active":true}`, http.StatusBadRequest},
+		{"unknown item", http.MethodPost, "/api/admin/rules", `{"name":"x","bundle":[{"itemCode":"NOPE","qty":2}],"percent":5,"active":true}`, http.StatusBadRequest},
+		{"percent is a string", http.MethodPost, "/api/admin/rules", `{"name":"x","bundle":[{"itemCode":"RED","qty":2}],"percent":"ten","active":true}`, http.StatusBadRequest},
+		{"component qty zero", http.MethodPost, "/api/admin/rules", `{"name":"x","bundle":[{"itemCode":"RED","qty":0}],"percent":5,"active":true}`, http.StatusBadRequest},
+		{"same item twice", http.MethodPost, "/api/admin/rules", `{"name":"x","bundle":[{"itemCode":"RED","qty":1},{"itemCode":"RED","qty":1}],"percent":5,"active":true}`, http.StatusBadRequest},
+		{"unknown item in second component", http.MethodPost, "/api/admin/rules", `{"name":"x","bundle":[{"itemCode":"RED","qty":1},{"itemCode":"NOPE","qty":1}],"percent":5,"active":true}`, http.StatusBadRequest},
+		{"bundle is not an array", http.MethodPost, "/api/admin/rules", `{"name":"x","bundle":"RED","percent":5,"active":true}`, http.StatusBadRequest},
 		{"not json", http.MethodPost, "/api/admin/rules", `nope`, http.StatusBadRequest},
-		{"update unknown id", http.MethodPut, "/api/admin/rules/999", `{"name":"x","itemCode":"RED","groupSize":2,"percent":5,"active":true}`, http.StatusNotFound},
-		{"update with a non-numeric id", http.MethodPut, "/api/admin/rules/abc", `{"name":"x","itemCode":"RED","groupSize":2,"percent":5,"active":true}`, http.StatusBadRequest},
+		{"update unknown id", http.MethodPut, "/api/admin/rules/999", `{"name":"x","bundle":[{"itemCode":"RED","qty":2}],"percent":5,"active":true}`, http.StatusNotFound},
+		{"update with a non-numeric id", http.MethodPut, "/api/admin/rules/abc", `{"name":"x","bundle":[{"itemCode":"RED","qty":2}],"percent":5,"active":true}`, http.StatusBadRequest},
 		{"update with non-JSON body", http.MethodPut, "/api/admin/rules/1", `nope`, http.StatusBadRequest},
-		{"update with invalid percent", http.MethodPut, "/api/admin/rules/1", `{"name":"x","itemCode":"RED","groupSize":2,"percent":200,"active":true}`, http.StatusBadRequest},
+		{"update with invalid percent", http.MethodPut, "/api/admin/rules/1", `{"name":"x","bundle":[{"itemCode":"RED","qty":2}],"percent":200,"active":true}`, http.StatusBadRequest},
 	}
 
 	app := newTestApp(t)
@@ -459,10 +461,10 @@ func TestFreshDatabaseMatchesTheBrief(t *testing.T) {
 
 	_, rulesRaw := adminRequest(t, app, http.MethodGet, "/api/admin/rules", "")
 	wantRules := `[` +
-		`{"id":1,"name":"pairs","itemCode":"ORANGE","groupSize":2,"percent":5,"memberOnly":false,"active":true},` +
-		`{"id":2,"name":"pairs","itemCode":"PINK","groupSize":2,"percent":5,"memberOnly":false,"active":true},` +
-		`{"id":3,"name":"pairs","itemCode":"GREEN","groupSize":2,"percent":5,"memberOnly":false,"active":true},` +
-		`{"id":4,"name":"Member 10%","itemCode":"","groupSize":0,"percent":10,"memberOnly":true,"active":true}]`
+		`{"id":1,"name":"Orange pairs","bundle":[{"itemCode":"ORANGE","qty":2}],"percent":5,"memberOnly":false,"active":true},` +
+		`{"id":2,"name":"Pink pairs","bundle":[{"itemCode":"PINK","qty":2}],"percent":5,"memberOnly":false,"active":true},` +
+		`{"id":3,"name":"Green pairs","bundle":[{"itemCode":"GREEN","qty":2}],"percent":5,"memberOnly":false,"active":true},` +
+		`{"id":4,"name":"Member 10%","bundle":[],"percent":10,"memberOnly":true,"active":true}]`
 	if rulesRaw != wantRules {
 		t.Errorf("rules = %s\nwant   %s", rulesRaw, wantRules)
 	}
@@ -501,7 +503,7 @@ func TestConcurrentWritesAndCalculationsDoNotFail(t *testing.T) {
 			var resp *http.Response
 			var raw string
 			if i%5 == 0 {
-				body := fmt.Sprintf(`{"name":"r%d","itemCode":"RED","groupSize":2,"percent":5,"memberOnly":false,"active":true}`, i)
+				body := fmt.Sprintf(`{"name":"r%d","bundle":[{"itemCode":"RED","qty":2}],"percent":5,"memberOnly":false,"active":true}`, i)
 				resp, raw = adminRequest(t, app, http.MethodPost, "/api/admin/rules", body)
 			} else {
 				resp, raw = postCalculate(t, app, `{"items":[{"code":"RED","qty":2}],"member":true}`)
@@ -533,5 +535,77 @@ func TestAdminItemAcceptsPriceAtTheLimit(t *testing.T) {
 	resp, calcRaw := postCalculate(t, app, `{"items":[{"code":"MAXPRICE","qty":10000}],"member":true}`)
 	if resp.StatusCode != http.StatusOK || !strings.Contains(calcRaw, `"subtotal":1000000000000`) {
 		t.Errorf("calculate = %d %s, want 200 with subtotal 1000000000000", resp.StatusCode, calcRaw)
+	}
+}
+
+func TestAdminBundleRuleDiscountsMixedItemsWithoutRestart(t *testing.T) {
+	app := newTestApp(t)
+
+	resp, raw := adminRequest(t, app, http.MethodPost, "/api/admin/rules",
+		`{"name":"Bundle A","bundle":[{"itemCode":"GREEN","qty":2},{"itemCode":"RED","qty":1}],"percent":12,"memberOnly":false,"active":true}`)
+	if resp.StatusCode != http.StatusCreated {
+		t.Fatalf("create status = %d, want 201: %s", resp.StatusCode, raw)
+	}
+
+	_, calcRaw := postCalculate(t, app, `{"items":[{"code":"GREEN","qty":2},{"code":"RED","qty":1}]}`)
+	want := `"subtotal":13000,"discounts":[{"label":"Bundle A ×1 (12%)","amount":1560}],"total":11440`
+	if !strings.Contains(calcRaw, want) {
+		t.Errorf("calculate = %s, want it to contain %s (the Green pair rule must not also fire)", calcRaw, want)
+	}
+}
+
+func TestAdminRuleUpdateReplacesBundle(t *testing.T) {
+	app := newTestApp(t)
+	adminRequest(t, app, http.MethodPost, "/api/admin/rules",
+		`{"name":"combo","bundle":[{"itemCode":"GREEN","qty":2},{"itemCode":"RED","qty":1}],"percent":12,"memberOnly":false,"active":true}`)
+
+	resp, raw := adminRequest(t, app, http.MethodPut, "/api/admin/rules/5",
+		`{"name":"combo","bundle":[{"itemCode":"BLUE","qty":3}],"percent":12,"memberOnly":false,"active":true}`)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("update status = %d, want 200: %s", resp.StatusCode, raw)
+	}
+
+	_, listRaw := adminRequest(t, app, http.MethodGet, "/api/admin/rules", "")
+	want := `{"id":5,"name":"combo","bundle":[{"itemCode":"BLUE","qty":3}],"percent":12,"memberOnly":false,"active":true}`
+	if !strings.Contains(listRaw, want) {
+		t.Errorf("rules = %s, want it to contain %s", listRaw, want)
+	}
+}
+
+func TestAdminRuleWithoutBundleIsWholeOrder(t *testing.T) {
+	for name, body := range map[string]string{
+		"omitted": `{"name":"Welcome 5%","percent":5,"memberOnly":false,"active":true}`,
+		"null":    `{"name":"Welcome 5%","bundle":null,"percent":5,"memberOnly":false,"active":true}`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			app := newTestApp(t)
+			resp, raw := adminRequest(t, app, http.MethodPost, "/api/admin/rules", body)
+			if resp.StatusCode != http.StatusCreated || !strings.Contains(raw, `"bundle":[]`) {
+				t.Fatalf("create = %d %s, want 201 with \"bundle\":[]", resp.StatusCode, raw)
+			}
+			_, listRaw := adminRequest(t, app, http.MethodGet, "/api/admin/rules", "")
+			if strings.Contains(listRaw, `"bundle":null`) {
+				t.Errorf("rules = %s, want no null bundle", listRaw)
+			}
+			_, calcRaw := postCalculate(t, app, `{"items":[{"code":"RED","qty":1}]}`)
+			if !strings.Contains(calcRaw, `{"label":"Welcome 5%","amount":250}`) {
+				t.Errorf("calculate = %s, want the whole-order discount", calcRaw)
+			}
+		})
+	}
+}
+
+func TestRejectedBundleStoresNothing(t *testing.T) {
+	app := newTestApp(t)
+
+	resp, _ := adminRequest(t, app, http.MethodPost, "/api/admin/rules",
+		`{"name":"x","bundle":[{"itemCode":"RED","qty":1},{"itemCode":"NOPE","qty":1}],"percent":5,"active":true}`)
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400", resp.StatusCode)
+	}
+
+	_, listRaw := adminRequest(t, app, http.MethodGet, "/api/admin/rules", "")
+	if got := strings.Count(listRaw, `"id":`); got != 4 {
+		t.Errorf("rules = %s, want only the 4 seeded rules", listRaw)
 	}
 }
