@@ -212,7 +212,8 @@ flowchart TD
     Apply --> Applies{"applies?"}
     Applies -- yes --> Take["add to discounts<br/>running total -= amount"]
     Applies -- no --> Loop
-    Take --> Loop
+    Take --> Claim["Claim: remove the discounted sets from lines<br/>(bundle rules only)"]
+    Claim --> Loop
     Loop -- no --> Done(["Breakdown: subtotal, discounts, total"])
 ```
 
@@ -292,6 +293,40 @@ Green × 4, Red × 1, non-member:
 | `Green pairs` (rule id 3) | 2 unclaimed Green, bundles = 1, 5% of 8000 | 19440 − 400 = **19040** |
 
 Result: ฿190.40, discount lines `Bundle A ×1 (12%)` −15.60 and `Green pairs ×1 (5%)` −4.00. Green × 2 + Red × 1 alone gives only the Bundle A line: ฿114.40.
+
+### 4.6 Bundle logic
+
+A bundle rule is a list of components, each an item and a quantity. Two ideas make it work: **counting** how many complete bundles the order holds, and **claiming** the sets those bundles use so no later rule discounts them again.
+
+**Counting.** Every component fills as many groups as its quantity allows; the bundle count is the smallest of those, because one short component stops a bundle. Example: Bundle A = Green × 2 + Red × 1 at 12%, order Green × 5 + Red × 2.
+
+```mermaid
+flowchart TD
+    O["Order lines<br/>Green x5, Red x2"] --> G["Green: 5 div 2 = 2 groups"]
+    O --> R["Red: 2 div 1 = 2 groups"]
+    G --> Min["bundles = min 2, 2 = 2"]
+    R --> Min
+    Min --> Z{"bundles is 0?"}
+    Z -- yes --> None(["rule does not apply"])
+    Z -- no --> Cov["covered sets = 2 x 2 Green + 2 x 1 Red<br/>= 4 Green + 2 Red = 26000 satang"]
+    Cov --> Amt["amount = 12% of 26000 = 3120<br/>label: Bundle A x2 12%"]
+    Cov --> Left["leftover: 1 Green, full price"]
+```
+
+If Green were 1, or Red missing, the minimum is 0 and the rule is skipped: only complete bundles are discounted.
+
+**Claiming.** After a rule applies, `Calculator` calls `Claim`, which returns the lines minus the covered sets (a copy; the original is untouched). The next rule is applied to those remaining lines. Because bigger bundles sort first, Bundle A (3 sets) reaches the Greens before the Green pair rule (2 sets). Example: Green × 4 + Red × 1 with Bundle A (id 5) and `Green pairs` (id 3):
+
+```mermaid
+flowchart LR
+    L0["Lines<br/>Green x4, Red x1"] --> A["Bundle A, 3 sets<br/>bundles = min 2, 1 = 1<br/>discount 1560"]
+    A -- "Claim: Green -2, Red -1" --> L1["Lines<br/>Green x2, Red x0"]
+    L1 --> P["Green pairs, 2 sets<br/>bundles = 2 div 2 = 1<br/>discount 400"]
+    P -- "Claim: Green -2" --> L2["Lines<br/>empty"]
+    L2 --> M["whole-order rules<br/>use the running total,<br/>claim nothing"]
+```
+
+Rule order matters only for bundle rules that share an item: sorted by sum of component quantities (bigger first), then ascending `id`. If `Green pairs` ran first it would take both Greens and Bundle A would find none, so it would never apply to this order.
 
 ## 5. Rule model
 
