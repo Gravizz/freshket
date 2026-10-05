@@ -81,6 +81,26 @@ func percentOf(amount Money, percent int64) Money {
 	return (amount*Money(percent) + 50) / 100
 }
 
+// ErrInvalidRule is returned when a discount rule breaks the rule constraints.
+var ErrInvalidRule = errors.New("invalid rule")
+
+// Validate checks the rule: a name of 1–60 characters, a whole-number percent
+// of 1–100, and a group size that matches its kind (1..MaxQuantity for an
+// item rule, 0 for a whole-order rule).
+func (r Rule) Validate() error {
+	switch {
+	case strings.TrimSpace(r.Name) == "" || utf8.RuneCountInString(r.Name) > 60:
+		return fmt.Errorf("%w: name must be 1-60 characters", ErrInvalidRule)
+	case r.Percent < 1 || r.Percent > 100:
+		return fmt.Errorf("%w: percent must be between 1 and 100", ErrInvalidRule)
+	case r.ItemCode != "" && (r.GroupSize < 1 || r.GroupSize > MaxQuantity):
+		return fmt.Errorf("%w: group size must be between 1 and %d", ErrInvalidRule, MaxQuantity)
+	case r.ItemCode == "" && r.GroupSize != 0:
+		return fmt.Errorf("%w: a rule without an item must have group size 0", ErrInvalidRule)
+	}
+	return nil
+}
+
 // ErrInvalidItem is returned when a menu item breaks the item rules.
 var ErrInvalidItem = errors.New("invalid item")
 

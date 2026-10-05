@@ -4,10 +4,14 @@ package rules
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 
 	"github.com/gravizz/freshket/backend/internal/pricing"
 )
+
+// ErrNotFound is returned when updating a rule that does not exist.
+var ErrNotFound = errors.New("rule not found")
 
 const schema = `
 CREATE TABLE IF NOT EXISTS discount_rules (
@@ -67,6 +71,11 @@ func (r *Repository) ListActive(ctx context.Context) ([]pricing.Rule, error) {
 	return r.list(ctx, `SELECT id, name, item_code, group_size, percent, member_only, active FROM discount_rules WHERE active = 1 ORDER BY id`)
 }
 
+// ListAll returns every rule, including deactivated ones, in ID order.
+func (r *Repository) ListAll(ctx context.Context) ([]pricing.Rule, error) {
+	return r.list(ctx, `SELECT id, name, item_code, group_size, percent, member_only, active FROM discount_rules ORDER BY id`)
+}
+
 func (r *Repository) list(ctx context.Context, query string) ([]pricing.Rule, error) {
 	rows, err := r.db.QueryContext(ctx, query)
 	if err != nil {
@@ -83,4 +92,35 @@ func (r *Repository) list(ctx context.Context, query string) ([]pricing.Rule, er
 		out = append(out, rule)
 	}
 	return out, rows.Err()
+}
+
+// Create inserts a rule and returns it with its assigned ID.
+func (r *Repository) Create(ctx context.Context, rule pricing.Rule) (pricing.Rule, error) {
+	res, err := r.db.ExecContext(ctx,
+		`INSERT INTO discount_rules (name, item_code, group_size, percent, member_only, active) VALUES (?, ?, ?, ?, ?, ?)`,
+		rule.Name, rule.ItemCode, rule.GroupSize, rule.Percent, rule.MemberOnly, rule.Active,
+	)
+	if err != nil {
+		return pricing.Rule{}, fmt.Errorf("insert rule: %w", err)
+	}
+	rule.ID, err = res.LastInsertId()
+	if err != nil {
+		return pricing.Rule{}, fmt.Errorf("rule id: %w", err)
+	}
+	return rule, nil
+}
+
+// Update replaces the rule with rule.ID, or returns ErrNotFound.
+func (r *Repository) Update(ctx context.Context, rule pricing.Rule) error {
+	res, err := r.db.ExecContext(ctx,
+		`UPDATE discount_rules SET name = ?, item_code = ?, group_size = ?, percent = ?, member_only = ?, active = ? WHERE id = ?`,
+		rule.Name, rule.ItemCode, rule.GroupSize, rule.Percent, rule.MemberOnly, rule.Active, rule.ID,
+	)
+	if err != nil {
+		return fmt.Errorf("update rule %d: %w", rule.ID, err)
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return fmt.Errorf("%w: %d", ErrNotFound, rule.ID)
+	}
+	return nil
 }
