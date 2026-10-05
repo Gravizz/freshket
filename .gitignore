@@ -1,0 +1,9 @@
+# Go
+backend/*.db
+backend/server
+
+# Node
+node_modules/
+frontend/dist/
+
+.DS_Store

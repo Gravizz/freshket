@@ -70,9 +70,9 @@ cd frontend && npm test                # Vitest + React Testing Library
 ## Testing
 
 - `internal/pricing` holds most of the test effort: the golden table above plus edges (odd quantities, mixed bundle items, rounding, unknown code). Aim for every rule and branch covered.
-- `internal/httpapi` gets a few integration tests through `app.Test(req)` against an in-memory SQLite (`file::memory:?cache=shared`).
+- `internal/httpapi` gets a few integration tests through `app.Test(req)` against an in-memory SQLite (`:memory:` with `db.SetMaxOpenConns(1)`, because each connection to `:memory:` opens a separate database).
 - Frontend gets one or two component tests: selecting items and toggling member renders the breakdown returned by a mocked API.
-- When you finish a change, run `go test ./...`, `go vet ./...`, `npm test`, and `npm run build`. All of them must pass.
+- When you finish a change, run `go test ./...`, `go vet ./...`, `npm test`, `npm run lint` (oxlint), and `npm run build`. All of them must pass.
 
 ## Code style
 
