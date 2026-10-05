@@ -1,1 +1,82 @@
 @import "tailwindcss";
+
+/* Palette and type taken from freshket.co: deep green #008065, fresh green
+   #00CE7C, mint #F0FAF8, and Prompt for headlines. */
+@theme {
+  --font-display: "Prompt", ui-sans-serif, system-ui, sans-serif;
+  --font-sans: "IBM Plex Sans Thai", ui-sans-serif, system-ui, sans-serif;
+  --font-mono: "IBM Plex Mono", ui-monospace, monospace;
+
+  --color-fk-900: #013d31;
+  --color-fk-800: #004d3d;
+  --color-fk-700: #006650;
+  --color-fk-600: #008065;
+  --color-fk-500: #00a874;
+  --color-fk-400: #00ce7c;
+  --color-fk-200: #c8f3e2;
+  --color-fk-100: #e3f7ef;
+  --color-mint: #f0faf8;
+  --color-sun: #f8c21f;
+  --color-ink: #1c2b27;
+
+  --animate-rise: rise 0.55s cubic-bezier(0.2, 0.8, 0.2, 1) both;
+  --animate-pop: pop 0.35s cubic-bezier(0.3, 1.6, 0.5, 1) both;
+  --animate-shine: shine 2.4s ease-in-out infinite;
+
+  @keyframes rise {
+    from {
+      opacity: 0;
+      transform: translateY(14px);
+    }
+    to {
+      opacity: 1;
+      transform: none;
+    }
+  }
+  @keyframes pop {
+    from {
+      transform: scale(0.92);
+    }
+    to {
+      transform: none;
+    }
+  }
+  @keyframes shine {
+    0%,
+    55% {
+      transform: translateX(-120%) skewX(-20deg);
+    }
+    100% {
+      transform: translateX(260%) skewX(-20deg);
+    }
+  }
+}
+
+@layer base {
+  body {
+    @apply bg-mint font-sans text-ink antialiased;
+    background-image:
+      radial-gradient(60rem 30rem at 110% -10%, --alpha(var(--color-fk-400) / 16%), transparent 60%),
+      radial-gradient(40rem 24rem at -10% 10%, --alpha(var(--color-sun) / 12%), transparent 60%);
+    background-attachment: fixed;
+  }
+  ::selection {
+    @apply bg-fk-200 text-fk-900;
+  }
+}
+
+/* Receipt edge: a row of half-circle bites along the bottom of the summary
+   card. Masking clips box-shadow, so the parent carries a drop-shadow. */
+.receipt-tear {
+  mask: radial-gradient(circle 7px at 50% 100%, #0000 97%, #000) 50% 0 / 20px 100%;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}

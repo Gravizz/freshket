@@ -63,7 +63,7 @@ Ordering 3 × Black now shows `Black set triple ×1 (10%)` −฿13.50 and a tot
 - **Pair discount**: Orange, Pink and Green get 5% off each pair of the *same* item. With 5 Orange, 2 pairs (4 sets) are discounted and the 5th pays full price. Mixed pairs such as Orange + Pink don't count.
 - **Discount order**: pair discounts apply first. The 10% member discount applies to the total after pair discounts.
 - **Rules**: a condition is only an item and a group size (every N sets of that item), or no item for the whole order, plus an optional members-only flag. The effect is a whole-number percent from 1 to 100. Item rules apply before whole-order rules, each by rule ID. The seed rules reproduce the original pair and member promotions.
-- **No deletes**: items and rules are switched off with `active=false`, because rules refer to items. An inactive item cannot be ordered and an inactive rule never applies. The admin page adds items and rules; switching them off is done through `PUT`.
+- **No deletes**: items and rules are switched off with `active=false`, because rules refer to items. An inactive item cannot be ordered and an inactive rule never applies. The admin page adds items and rules, and each row has an active switch that calls `PUT`.
 - **Quantity cap**: at most 10,000 sets of one item per order, so totals cannot overflow.
 - **Money**: amounts are integer satang end to end. A percentage that produces a fraction of a satang rounds half-up at each discount step.
 

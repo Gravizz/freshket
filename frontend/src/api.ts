@@ -60,12 +60,24 @@ export function createItem(item: AdminItem): Promise<AdminItem> {
   return request('/api/admin/menu', { method: 'POST', headers: json, body: JSON.stringify(item) })
 }
 
+export function updateItem(item: AdminItem): Promise<AdminItem> {
+  return request(`/api/admin/menu/${encodeURIComponent(item.code)}`, {
+    method: 'PUT',
+    headers: json,
+    body: JSON.stringify(item),
+  })
+}
+
 export function fetchRules(): Promise<Rule[]> {
   return request('/api/admin/rules')
 }
 
 export function createRule(rule: Omit<Rule, 'id'>): Promise<Rule> {
   return request('/api/admin/rules', { method: 'POST', headers: json, body: JSON.stringify(rule) })
+}
+
+export function updateRule(rule: Rule): Promise<Rule> {
+  return request(`/api/admin/rules/${rule.id}`, { method: 'PUT', headers: json, body: JSON.stringify(rule) })
 }
 
 export function formatTHB(satang: number): string {

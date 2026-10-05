@@ -100,6 +100,33 @@ describe('Admin', () => {
     expect(await screen.findByRole('alert')).toHaveTextContent('duplicate item code: RED')
   })
 
+  it('takes an item off the menu with its active switch', async () => {
+    const user = userEvent.setup()
+    vi.mocked(api.updateItem).mockImplementation(async (item) => item)
+    render(<Admin />)
+
+    const toggle = await screen.findByRole('switch', { name: 'Red set active' })
+    expect(toggle).toBeChecked()
+    await user.click(toggle)
+
+    expect(api.updateItem).toHaveBeenCalledWith({ code: 'RED', name: 'Red set', price: 5000, active: false })
+    expect(await screen.findByRole('switch', { name: 'Red set active' })).not.toBeChecked()
+    expect(screen.getByRole('status')).toHaveTextContent('Red set')
+  })
+
+  it('pauses a discount rule with its active switch', async () => {
+    const user = userEvent.setup()
+    const rule = { id: 3, name: 'Member', itemCode: '', groupSize: 0, percent: 10, memberOnly: true, active: true }
+    vi.mocked(api.fetchRules).mockResolvedValue([rule])
+    vi.mocked(api.updateRule).mockImplementation(async (r) => r)
+    render(<Admin />)
+
+    await user.click(await screen.findByRole('switch', { name: 'Member active' }))
+
+    expect(api.updateRule).toHaveBeenCalledWith({ ...rule, active: false })
+    expect(await screen.findByRole('switch', { name: 'Member active' })).not.toBeChecked()
+  })
+
   it('shows an error when the lists cannot be loaded', async () => {
     vi.mocked(api.fetchAdminMenu).mockRejectedValue(new Error('backend is down'))
     render(<Admin />)
