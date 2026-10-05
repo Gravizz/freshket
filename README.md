@@ -5,7 +5,15 @@ Freshket software engineer homework: a price calculator for a food store with me
 - **Backend**: Go, Fiber v3, SQLite (`modernc.org/sqlite`, pure Go, no CGO)
 - **Frontend**: React, TypeScript, Vite, Tailwind CSS v4
 
-## Prerequisites
+## Quick start (Docker)
+
+```bash
+docker compose up --build
+```
+
+Open <http://localhost:3000> (admin at `/#/admin`). nginx serves the frontend and proxies `/api` to the backend; the SQLite file lives in the `db` volume, so data survives restarts. Reset with `docker compose down -v`.
+
+## Prerequisites (running without Docker)
 
 - Go 1.26+ (required by `modernc.org/sqlite`; with Go 1.21+ and network access the `go` command downloads it automatically)
 - Node.js 22+
