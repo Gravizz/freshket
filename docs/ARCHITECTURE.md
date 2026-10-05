@@ -28,10 +28,12 @@ flowchart LR
 
     subgraph Server["Go backend (Fiber v3)"]
         Main["cmd/server<br/>wiring + config"]
+        DBPkg["internal/database<br/>Open: busy timeout + WAL"]
         HTTP["internal/httpapi<br/>handlers + DTOs"]
         Pricing["internal/pricing<br/>Calculator, Rule, Discount<br/>pure domain, no I/O"]
         Menu["internal/menu<br/>Repository"]
         Rules["internal/rules<br/>Repository"]
+        Main --> DBPkg
         Main --> HTTP
         HTTP --> Pricing
         HTTP --> Menu
@@ -49,8 +51,9 @@ flowchart LR
 
 | Package | Responsibility |
 |---|---|
-| `cmd/server` | Reads `PORT` and `DB_PATH`, opens SQLite, runs both migrations, starts Fiber |
-| `internal/httpapi` | Routes, JSON DTOs, validation-to-status mapping. Loads items and rules per request |
+| `cmd/server` | Reads `PORT` and `DB_PATH`, opens SQLite through `database.Open`, runs both migrations, starts Fiber |
+| `internal/database` | Opens the SQLite file with a 5 second busy timeout and WAL, so concurrent admin writes and customer calculations do not fail with `SQLITE_BUSY` |
+| `internal/httpapi` | Routes, JSON DTOs, validation-to-status mapping. Loads items and rules per request. `httpapi.go` has the public routes, `admin_menu.go` and `admin_rules.go` the admin ones |
 | `internal/pricing` | `Calculator`, the `Discount` interface, the data-driven `Rule`, validation, rounding |
 | `internal/menu` | Menu items in SQLite: list active or all, create, update, seed |
 | `internal/rules` | Discount rules in SQLite: list active or all, create, update, seed |
@@ -67,7 +70,7 @@ erDiagram
     MENU_ITEMS {
         TEXT code PK "1-20 chars of A-Z 0-9 _ ; immutable"
         TEXT name "1-60 chars"
-        INTEGER price "satang, at least 1"
+        INTEGER price "satang, 1 to 100000000"
         INTEGER active "1 orderable, 0 switched off"
     }
 
@@ -167,7 +170,7 @@ After either call the next customer calculation uses the new data.
 
 ```mermaid
 flowchart TD
-    A["main()"] --> B["open SQLite at DB_PATH"]
+    A["main()"] --> B["database.Open DB_PATH: busy timeout + WAL"]
     B --> C["menu.Migrate: create table, insert missing seed items"]
     C --> D["rules.Migrate: create table, seed 4 rules if empty"]
     D --> E["httpapi.New menuRepo rulesRepo"]

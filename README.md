@@ -7,7 +7,7 @@ Freshket software engineer homework: a price calculator for a food store with me
 
 ## Prerequisites
 
-- Go 1.25+
+- Go 1.26+ (required by `modernc.org/sqlite`; with Go 1.21+ and network access the `go` command downloads it automatically)
 - Node.js 22+
 
 ## Run
@@ -46,7 +46,7 @@ All amounts are integer **satang** (1 THB = 100 satang).
 
 Admin endpoints (no authentication: this is a simulation):
 
-- `GET /api/admin/menu`, `POST /api/admin/menu`, `PUT /api/admin/menu/:code` with `{ "code", "name", "price", "active" }`. Codes are 1–20 characters of `A-Z`, `0-9`, `_`; price is at least 1 satang. A duplicate code returns `409`.
+- `GET /api/admin/menu`, `POST /api/admin/menu`, `PUT /api/admin/menu/:code` with `{ "code", "name", "price", "active" }`. Codes are 1–20 characters of `A-Z`, `0-9`, `_`; price is from 1 satang to 100,000,000 satang (฿1,000,000). A duplicate code returns `409`.
 - `GET /api/admin/rules`, `POST /api/admin/rules`, `PUT /api/admin/rules/:id` with `{ "name", "itemCode", "groupSize", "percent", "memberOnly", "active" }`.
 
 ```bash

@@ -16,7 +16,8 @@ backend/
   internal/pricing/  # the calculator: pure domain logic, zero I/O
   internal/menu/     # SQLite repository + seed for the 7 menu items
   internal/rules/    # SQLite repository + seed for the discount rules
-  internal/httpapi/  # Fiber handlers, request/response DTOs
+  internal/database/ # opens SQLite (busy timeout + WAL)
+  internal/httpapi/  # Fiber handlers (httpapi.go public, admin_menu.go, admin_rules.go), DTOs
 frontend/
   src/               # menu picker, member toggle, price breakdown, /#/admin page
 README.md            # how to run, assumptions, design notes (reviewer-facing)
@@ -51,7 +52,7 @@ Implementation rules:
 - Every discount implements one small interface, `Discount.Apply(lines, member, runningTotal) (AppliedDiscount, bool)`, and `pricing.Rule` is its only data-driven implementation. A condition is only item + group size (+ member flag) and an effect is only a whole-number percent. This is the **extensibility** reviewers look for, so stop there: no expression language and no other condition types.
 - Labels: item rule `"<Item.Name> <Rule.Name> ×<groups> (<Percent>%)"`, whole-order rule = `Rule.Name`.
 - Items and rules are deactivated (`active=false`), never deleted. Inactive items are unknown to ordering; inactive rules never apply.
-- Item code is 1–20 characters of `A-Z`, `0-9`, `_`; name 1–60 characters; price at least 1 satang. Quantity per code is capped at `MaxQuantity` (10,000) so totals cannot overflow.
+- Item code is 1–20 characters of `A-Z`, `0-9`, `_`; name 1–60 characters; price from 1 satang to `MaxPrice` (100,000,000 satang). Quantity per code is capped at `MaxQuantity` (10,000) so totals cannot overflow.
 - The calculator takes the menu as input. It never loads the menu itself, so tests need no DB.
 - Return a **breakdown**, not just a number: subtotal, each applied discount with label and amount, and total. The UI renders that breakdown directly.
 - Reject unknown item codes, negative or over-limit quantities, and invalid items or rules with typed errors. `httpapi` maps them to 400 (duplicate item code 409, missing item or rule on update 404).
@@ -79,6 +80,7 @@ cd frontend && npm test                # Vitest + React Testing Library
 ## Testing
 
 - `internal/pricing` holds most of the test effort: the golden table above plus edges (odd quantities, mixed bundle items, rounding, unknown code). Aim for every rule and branch covered.
+- Open the production database through `database.Open`; one test hammers a file database with concurrent writes and calculations and expects no 5xx. HTTP tests send requests with a 30 second timeout (Fiber's one second default is flaky under load).
 - `internal/httpapi` gets a few integration tests through `app.Test(req)` against an in-memory SQLite (`:memory:` with `db.SetMaxOpenConns(1)`, because each connection to `:memory:` opens a separate database).
 - `internal/httpapi` tests also pin the admin acceptance cases: add an item or a rule through the API, then calculate, with no restart.
 - Frontend gets component tests with a mocked `api.ts`: the calculator page renders the returned breakdown, and the admin page adds items and rules and shows server errors.

@@ -1,5 +1,7 @@
 # Go
 backend/*.db
+backend/*.db-wal
+backend/*.db-shm
 backend/server
 
 # Node
@@ -7,3 +9,6 @@ node_modules/
 frontend/dist/
 
 .DS_Store
+
+# Local tooling config (machine-specific ports)
+.claude/
