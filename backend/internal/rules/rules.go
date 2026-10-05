@@ -49,6 +49,9 @@ func NewRepository(db *sql.DB) *Repository {
 
 // Migrate creates the schema and seeds the original rules when the table is empty.
 func (r *Repository) Migrate(ctx context.Context) error {
+	if err := r.rejectOldSchema(ctx); err != nil {
+		return err
+	}
 	if _, err := r.db.ExecContext(ctx, schema); err != nil {
 		return fmt.Errorf("create rules schema: %w", err)
 	}
@@ -182,6 +185,21 @@ func insertBundle(ctx context.Context, tx *sql.Tx, rule pricing.Rule) error {
 		); err != nil {
 			return fmt.Errorf("insert bundle item %q of rule %d: %w", c.ItemCode, rule.ID, err)
 		}
+	}
+	return nil
+}
+
+// rejectOldSchema fails on a database written before bundle rules, whose
+// discount_rules table still has the item_code column: its rows would be read
+// as whole-order rules and misprice every order. There is no in-place migration.
+func (r *Repository) rejectOldSchema(ctx context.Context) error {
+	var n int
+	if err := r.db.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM pragma_table_info('discount_rules') WHERE name = 'item_code'`).Scan(&n); err != nil {
+		return fmt.Errorf("inspect rules schema: %w", err)
+	}
+	if n > 0 {
+		return errors.New("discount_rules has the old item_code schema; delete the database file and restart")
 	}
 	return nil
 }
