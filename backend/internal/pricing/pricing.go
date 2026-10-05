@@ -12,9 +12,10 @@ type Money int64
 
 // Item is a menu entry.
 type Item struct {
-	Code  string
-	Name  string
-	Price Money
+	Code   string
+	Name   string
+	Price  Money
+	Active bool
 }
 
 // Menu maps an item code to its menu entry.

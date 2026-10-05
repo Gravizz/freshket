@@ -4,16 +4,25 @@ package menu
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 
 	"github.com/gravizz/freshket/backend/internal/pricing"
+)
+
+var (
+	// ErrDuplicate is returned when creating an item whose code already exists.
+	ErrDuplicate = errors.New("duplicate item code")
+	// ErrNotFound is returned when updating an item that does not exist.
+	ErrNotFound = errors.New("item not found")
 )
 
 const schema = `
 CREATE TABLE IF NOT EXISTS menu_items (
 	code  TEXT PRIMARY KEY,
 	name  TEXT NOT NULL,
-	price INTEGER NOT NULL -- satang
+	price INTEGER NOT NULL, -- satang
+	active INTEGER NOT NULL DEFAULT 1
 );`
 
 var seed = []pricing.Item{
@@ -52,9 +61,18 @@ func (r *Repository) Migrate(ctx context.Context) error {
 	return nil
 }
 
-// List returns all menu items in insertion order.
-func (r *Repository) List(ctx context.Context) ([]pricing.Item, error) {
-	rows, err := r.db.QueryContext(ctx, `SELECT code, name, price FROM menu_items ORDER BY rowid`)
+// ListActive returns the items customers can order, in insertion order.
+func (r *Repository) ListActive(ctx context.Context) ([]pricing.Item, error) {
+	return r.list(ctx, `SELECT code, name, price, active FROM menu_items WHERE active = 1 ORDER BY rowid`)
+}
+
+// ListAll returns every item, including deactivated ones, in insertion order.
+func (r *Repository) ListAll(ctx context.Context) ([]pricing.Item, error) {
+	return r.list(ctx, `SELECT code, name, price, active FROM menu_items ORDER BY rowid`)
+}
+
+func (r *Repository) list(ctx context.Context, query string) ([]pricing.Item, error) {
+	rows, err := r.db.QueryContext(ctx, query)
 	if err != nil {
 		return nil, fmt.Errorf("query menu: %w", err)
 	}
@@ -63,10 +81,41 @@ func (r *Repository) List(ctx context.Context) ([]pricing.Item, error) {
 	var items []pricing.Item
 	for rows.Next() {
 		var it pricing.Item
-		if err := rows.Scan(&it.Code, &it.Name, &it.Price); err != nil {
+		if err := rows.Scan(&it.Code, &it.Name, &it.Price, &it.Active); err != nil {
 			return nil, fmt.Errorf("scan menu item: %w", err)
 		}
 		items = append(items, it)
 	}
 	return items, rows.Err()
+}
+
+// Create inserts a new menu item, or returns ErrDuplicate if the code exists.
+func (r *Repository) Create(ctx context.Context, it pricing.Item) error {
+	res, err := r.db.ExecContext(ctx,
+		`INSERT INTO menu_items (code, name, price, active) VALUES (?, ?, ?, ?) ON CONFLICT(code) DO NOTHING`,
+		it.Code, it.Name, it.Price, it.Active,
+	)
+	if err != nil {
+		return fmt.Errorf("insert %s: %w", it.Code, err)
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return fmt.Errorf("%w: %s", ErrDuplicate, it.Code)
+	}
+	return nil
+}
+
+// Update replaces the name, price and active flag of the item with it.Code,
+// or returns ErrNotFound.
+func (r *Repository) Update(ctx context.Context, it pricing.Item) error {
+	res, err := r.db.ExecContext(ctx,
+		`UPDATE menu_items SET name = ?, price = ?, active = ? WHERE code = ?`,
+		it.Name, it.Price, it.Active, it.Code,
+	)
+	if err != nil {
+		return fmt.Errorf("update %s: %w", it.Code, err)
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return fmt.Errorf("%w: %s", ErrNotFound, it.Code)
+	}
+	return nil
 }

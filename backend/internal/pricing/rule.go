@@ -1,8 +1,12 @@
 package pricing
 
 import (
+	"errors"
 	"fmt"
+	"regexp"
 	"sort"
+	"strings"
+	"unicode/utf8"
 )
 
 // Rule is a configurable promotion.
@@ -75,4 +79,23 @@ func Discounts(rules []Rule) []Discount {
 // percentOf returns percent% of amount, rounding half-up to a whole satang.
 func percentOf(amount Money, percent int64) Money {
 	return (amount*Money(percent) + 50) / 100
+}
+
+// ErrInvalidItem is returned when a menu item breaks the item rules.
+var ErrInvalidItem = errors.New("invalid item")
+
+var itemCodePattern = regexp.MustCompile(`^[A-Z0-9_]{1,20}$`)
+
+// Validate checks the item: code of 1–20 uppercase letters, digits or
+// underscores; name of 1–60 characters; price of at least one satang.
+func (i Item) Validate() error {
+	switch {
+	case !itemCodePattern.MatchString(i.Code):
+		return fmt.Errorf("%w: code must be 1-20 characters of A-Z, 0-9 or _", ErrInvalidItem)
+	case strings.TrimSpace(i.Name) == "" || utf8.RuneCountInString(i.Name) > 60:
+		return fmt.Errorf("%w: name must be 1-60 characters", ErrInvalidItem)
+	case i.Price < 1:
+		return fmt.Errorf("%w: price must be at least 1 satang", ErrInvalidItem)
+	}
+	return nil
 }

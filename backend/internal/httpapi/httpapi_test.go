@@ -198,3 +198,108 @@ func TestMigrationsAreIdempotent(t *testing.T) {
 		t.Errorf("body = %s, want total 51840 with exactly two discounts", raw)
 	}
 }
+
+func adminRequest(t *testing.T, app *fiber.App, method, path, body string) (*http.Response, string) {
+	t.Helper()
+	req := httptest.NewRequest(method, path, strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := app.Test(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw, err := io.ReadAll(resp.Body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return resp, string(raw)
+}
+
+func TestAdminAddedItemCanBeOrderedWithoutRestart(t *testing.T) {
+	app := newTestApp(t)
+
+	resp, raw := adminRequest(t, app, http.MethodPost, "/api/admin/menu",
+		`{"code":"BLACK","name":"Black set","price":4500,"active":true}`)
+	if resp.StatusCode != http.StatusCreated {
+		t.Fatalf("create status = %d, want 201: %s", resp.StatusCode, raw)
+	}
+
+	_, menuRaw := adminRequest(t, app, http.MethodGet, "/api/menu", "")
+	if strings.Count(menuRaw, `"code"`) != 8 {
+		t.Errorf("menu = %s, want 8 items", menuRaw)
+	}
+
+	resp, calcRaw := postCalculate(t, app, `{"items":[{"code":"BLACK","qty":2}]}`)
+	if resp.StatusCode != http.StatusOK || !strings.Contains(calcRaw, `"subtotal":9000`) {
+		t.Errorf("calculate = %d %s, want 200 with subtotal 9000", resp.StatusCode, calcRaw)
+	}
+}
+
+func TestAdminEditPrice(t *testing.T) {
+	app := newTestApp(t)
+
+	resp, raw := adminRequest(t, app, http.MethodPut, "/api/admin/menu/RED", `{"name":"Red set","price":6000,"active":true}`)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("update status = %d, want 200: %s", resp.StatusCode, raw)
+	}
+
+	_, calcRaw := postCalculate(t, app, `{"items":[{"code":"RED","qty":1}]}`)
+	if !strings.Contains(calcRaw, `"subtotal":6000`) {
+		t.Errorf("calculate = %s, want subtotal 6000", calcRaw)
+	}
+}
+
+func TestDeactivatedItemCannotBeOrdered(t *testing.T) {
+	app := newTestApp(t)
+
+	resp, raw := adminRequest(t, app, http.MethodPut, "/api/admin/menu/RED", `{"name":"Red set","price":5000,"active":false}`)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("update status = %d, want 200: %s", resp.StatusCode, raw)
+	}
+
+	_, menuRaw := adminRequest(t, app, http.MethodGet, "/api/menu", "")
+	if strings.Contains(menuRaw, `"RED"`) {
+		t.Errorf("customer menu = %s, want RED omitted", menuRaw)
+	}
+	_, adminRaw := adminRequest(t, app, http.MethodGet, "/api/admin/menu", "")
+	if !strings.Contains(adminRaw, `{"code":"RED","name":"Red set","price":5000,"active":false}`) {
+		t.Errorf("admin menu = %s, want RED listed as inactive", adminRaw)
+	}
+	resp, _ = postCalculate(t, app, `{"items":[{"code":"RED","qty":1}]}`)
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Errorf("calculate status = %d, want 400 for a deactivated item", resp.StatusCode)
+	}
+}
+
+func TestAdminItemRejectsBadInput(t *testing.T) {
+	item := func(code, name string, price int64) string {
+		b, _ := json.Marshal(map[string]any{"code": code, "name": name, "price": price, "active": true})
+		return string(b)
+	}
+	tests := []struct {
+		name, method, path, body string
+		want                     int
+	}{
+		{"duplicate code", http.MethodPost, "/api/admin/menu", item("RED", "Another red", 100), http.StatusConflict},
+		{"empty code", http.MethodPost, "/api/admin/menu", item("", "X", 100), http.StatusBadRequest},
+		{"lowercase code", http.MethodPost, "/api/admin/menu", item("red2", "X", 100), http.StatusBadRequest},
+		{"code too long", http.MethodPost, "/api/admin/menu", item(strings.Repeat("A", 21), "X", 100), http.StatusBadRequest},
+		{"code with symbol", http.MethodPost, "/api/admin/menu", item("A-B", "X", 100), http.StatusBadRequest},
+		{"zero price", http.MethodPost, "/api/admin/menu", item("FREE", "X", 0), http.StatusBadRequest},
+		{"empty name", http.MethodPost, "/api/admin/menu", item("NONAME", "", 100), http.StatusBadRequest},
+		{"name too long", http.MethodPost, "/api/admin/menu", item("LONGNAME", strings.Repeat("n", 61), 100), http.StatusBadRequest},
+		{"price is a string", http.MethodPost, "/api/admin/menu", `{"code":"STR","name":"X","price":"45","active":true}`, http.StatusBadRequest},
+		{"not json", http.MethodPost, "/api/admin/menu", `nope`, http.StatusBadRequest},
+		{"update unknown code", http.MethodPut, "/api/admin/menu/NOPE", `{"name":"X","price":100,"active":true}`, http.StatusNotFound},
+		{"update with zero price", http.MethodPut, "/api/admin/menu/RED", `{"name":"Red set","price":0,"active":true}`, http.StatusBadRequest},
+	}
+
+	app := newTestApp(t)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			resp, raw := adminRequest(t, app, tt.method, tt.path, tt.body)
+			if resp.StatusCode != tt.want {
+				t.Errorf("status = %d, want %d: %s", resp.StatusCode, tt.want, raw)
+			}
+		})
+	}
+}
