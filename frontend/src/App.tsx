@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import { calculate, fetchMenu, formatTHB, type Breakdown, type MenuItem } from './api'
+import { displayCode } from './itemColor'
 import Plate from './Plate'
 
 export default function App() {
@@ -231,7 +232,7 @@ function MenuCard({ item, qty, onChange, delay }: MenuCardProps) {
       }`}
     >
       <span className="absolute top-3 right-4 hidden font-mono text-[10px] tracking-wider text-ink/35 uppercase sm:block">
-        {item.code}
+        {displayCode(item.code)}
       </span>
       <div className="sm:self-start">
         <div className="relative">

@@ -10,12 +10,12 @@ import {
   type AdminItem,
   type Rule,
 } from './api'
-import { itemColor } from './itemColor'
+import { codeFromColor, displayCode, honeycomb, itemColor } from './itemColor'
 import Plate from './Plate'
 
 export default function Admin() {
   const [items, setItems] = useState<AdminItem[]>([])
-  const [code, setCode] = useState('')
+  const [color, setColor] = useState(defaultColor)
   const [name, setName] = useState('')
   const [price, setPrice] = useState('')
   const [rules, setRules] = useState<Rule[]>([])
@@ -78,13 +78,13 @@ export default function Admin() {
     e.preventDefault()
     return run(async () => {
       const created = await createItem({
-        code,
+        code: codeFromColor(color),
         name,
         price: Math.round(parseFloat(price) * 100),
         active: true,
       })
       setItems((list) => [...list, created])
-      setCode('')
+      setColor(defaultColor)
       setName('')
       setPrice('')
       return `“${created.name}” added to the menu`
@@ -176,7 +176,7 @@ export default function Admin() {
                 <Plate code={item.code} size="sm" />
                 <div className="min-w-0 flex-1">
                   <p className="truncate font-medium">{item.name}</p>
-                  <p className="font-mono text-[11px] tracking-wider text-ink/45">{item.code}</p>
+                  <p className="font-mono text-[11px] tracking-wider text-ink/45">{displayCode(item.code)}</p>
                 </div>
                 <span className="font-mono text-sm tabular-nums">{formatTHB(item.price)}</span>
                 <Switch label={`${item.name} active`} checked={item.active} onChange={() => toggleItem(item)} />
@@ -184,8 +184,8 @@ export default function Admin() {
             ))}
           </ul>
 
-          <form onSubmit={addItem} className="grid gap-3 border-t border-black/5 bg-mint/60 p-5 sm:grid-cols-[1fr_1.4fr_1fr]">
-            <TextField label="Item code" value={code} onChange={(v) => setCode(v.toUpperCase())} placeholder="BLACK" mono />
+          <form onSubmit={addItem} className="grid gap-3 rounded-b-2xl border-t border-black/5 bg-mint/60 p-5 sm:grid-cols-[1fr_1.4fr_1fr]">
+            <ColorField label="Item code" value={color} onChange={setColor} />
             <TextField label="Item name" value={name} onChange={setName} placeholder="Black set" />
             <TextField label="Price (THB)" value={price} onChange={setPrice} placeholder="45.00" prefix="฿" inputMode="decimal" mono />
             <SubmitButton className="sm:col-span-3">Add item</SubmitButton>
@@ -226,7 +226,7 @@ export default function Admin() {
             ))}
           </ul>
 
-          <form onSubmit={addRule} className="grid gap-3 border-t border-black/5 bg-mint/60 p-5 sm:grid-cols-2">
+          <form onSubmit={addRule} className="grid gap-3 rounded-b-2xl border-t border-black/5 bg-mint/60 p-5 sm:grid-cols-2">
             <TextField label="Rule name" value={ruleName} onChange={setRuleName} placeholder="Buy 3 save 10%" />
             <SelectField label="Rule item" value={ruleItem} onChange={setRuleItem}>
               <option value="">Whole order</option>
@@ -274,7 +274,7 @@ function Panel({ title, subtitle, delay, children }: { title: string; subtitle: 
   return (
     <section
       style={{ animationDelay: `${delay}ms` }}
-      className="animate-rise overflow-hidden rounded-2xl bg-white shadow-[0_18px_40px_-24px_rgb(0_77_61/0.35)] ring-1 ring-black/5"
+      className="relative animate-rise rounded-2xl bg-white has-[[aria-expanded=true]]:z-20 shadow-[0_18px_40px_-24px_rgb(0_77_61/0.35)] ring-1 ring-black/5"
     >
       <header className="px-5 pt-5 pb-3">
         <h2 className="font-display text-lg font-semibold text-fk-900">{title}</h2>
@@ -293,6 +293,8 @@ function Stat({ label, value }: { label: string; value: number }) {
     </div>
   )
 }
+
+const defaultColor = '#00CE7C'
 
 const fieldClass =
   'w-full rounded-lg border border-black/10 bg-white px-3 py-2 text-sm shadow-xs transition placeholder:text-ink/30 focus:border-fk-400 focus:ring-3 focus:ring-fk-400/20 focus:outline-none'
@@ -341,6 +343,68 @@ function Adornment({ side, children }: { side: 'left' | 'right'; children: strin
     >
       {children}
     </span>
+  )
+}
+
+// ColorField picks an item's colour from the honeycomb tray; its hex digits
+// become the item code.
+function ColorField({ label, value, onChange }: { label: string; value: string; onChange: (value: string) => void }) {
+  const id = useId()
+  const [open, setOpen] = useState(false)
+  const pick = (color: string) => {
+    onChange(color)
+    setOpen(false)
+  }
+  return (
+    <div className="relative flex flex-col gap-1">
+      <label htmlFor={id} className="text-xs font-medium text-ink/70">
+        {label}
+      </label>
+      <button
+        id={id}
+        type="button"
+        aria-expanded={open}
+        onClick={() => setOpen((o) => !o)}
+        onKeyDown={(e) => e.key === 'Escape' && setOpen(false)}
+        className={`${fieldClass} flex items-center gap-2 py-1.5 text-left`}
+      >
+        <span className="size-6 shrink-0 rounded-md ring-1 ring-black/10" style={{ background: value }} />
+        <span className="flex-1 font-mono">{displayCode(codeFromColor(value))}</span>
+        <span aria-hidden className="text-ink/35">▾</span>
+      </button>
+
+      {open && (
+        <>
+          <div aria-hidden className="fixed inset-0 z-30" onClick={() => setOpen(false)} />
+          <div
+            role="radiogroup"
+            aria-label="Item colour"
+            onKeyDown={(e) => e.key === 'Escape' && setOpen(false)}
+            className="absolute top-full left-0 z-40 mt-2 animate-rise rounded-2xl bg-white p-4 shadow-xl ring-1 ring-black/10"
+          >
+            {honeycomb.map((row, i) => (
+              <div key={i} className="-mt-[5px] flex justify-center gap-[3px] first:mt-0">
+                {row.map((color) => (
+                  <button
+                    key={color}
+                    type="button"
+                    role="radio"
+                    aria-checked={color === value.toUpperCase()}
+                    aria-label={color}
+                    title={color}
+                    onClick={() => pick(color)}
+                    className={`h-[27px] w-6 transition [clip-path:polygon(50%_0,100%_25%,100%_75%,50%_100%,0_75%,0_25%)] hover:scale-125 focus-visible:scale-125 focus-visible:outline-none ${
+                      color === value.toUpperCase() ? 'scale-125' : ''
+                    }`}
+                    style={{ background: color }}
+                  />
+                ))}
+              </div>
+            ))}
+          </div>
+        </>
+      )}
+    </div>
   )
 }
 

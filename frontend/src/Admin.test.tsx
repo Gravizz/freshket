@@ -22,24 +22,25 @@ describe('Admin', () => {
     vi.mocked(api.fetchRules).mockResolvedValue([])
   })
 
-  it('lets an admin add a menu item priced in baht', async () => {
+  it('lets an admin add a menu item coded by a honeycomb colour and priced in baht', async () => {
     const user = userEvent.setup()
     vi.mocked(api.createItem).mockImplementation(async (item) => item)
     render(<Admin />)
     expect(await screen.findByText('RED')).toBeInTheDocument()
 
-    await user.type(screen.getByLabelText('Item code'), 'BLACK')
+    await user.click(screen.getByLabelText('Item code'))
+    await user.click(screen.getByRole('radio', { name: '#E05252' }))
     await user.type(screen.getByLabelText('Item name'), 'Black set')
     await user.type(screen.getByLabelText('Price (THB)'), '45.50')
     await user.click(screen.getByRole('button', { name: 'Add item' }))
 
     expect(api.createItem).toHaveBeenCalledWith({
-      code: 'BLACK',
+      code: 'E05252',
       name: 'Black set',
       price: 4550,
       active: true,
     })
-    expect(await screen.findByText('BLACK')).toBeInTheDocument()
+    expect(await screen.findByText('#E05252')).toBeInTheDocument()
   })
 
   it('lets an admin add a discount rule for an item', async () => {
@@ -88,16 +89,15 @@ describe('Admin', () => {
 
   it('shows the server error when adding fails', async () => {
     const user = userEvent.setup()
-    vi.mocked(api.createItem).mockRejectedValue(new Error('duplicate item code: RED'))
+    vi.mocked(api.createItem).mockRejectedValue(new Error('duplicate item code: 00CE7C'))
     render(<Admin />)
     expect(await screen.findByText('RED')).toBeInTheDocument()
 
-    await user.type(screen.getByLabelText('Item code'), 'RED')
-    await user.type(screen.getByLabelText('Item name'), 'Another red')
+    await user.type(screen.getByLabelText('Item name'), 'Another green')
     await user.type(screen.getByLabelText('Price (THB)'), '10')
     await user.click(screen.getByRole('button', { name: 'Add item' }))
 
-    expect(await screen.findByRole('alert')).toHaveTextContent('duplicate item code: RED')
+    expect(await screen.findByRole('alert')).toHaveTextContent('duplicate item code: 00CE7C')
   })
 
   it('takes an item off the menu with its active switch', async () => {
