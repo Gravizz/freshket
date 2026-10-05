@@ -69,6 +69,8 @@ Ordering 3 × Black now shows `Black set triple ×1 (10%)` −฿13.50 and a tot
 
 ## Design
 
+Diagrams (architecture, ER, request flows, calculation logic) are in [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
+
 - `internal/pricing` is pure domain logic with no HTTP or DB imports, so it is unit-tested in isolation.
 - Each promotion implements the `pricing.Discount` interface, and the `Calculator` applies them in order. `pricing.Rule` is the data-driven implementation, loaded from SQLite on every calculation. **To add a promotion**, add a rule on `/#/admin` or through `POST /api/admin/rules`; no code changes. A new kind of condition (for example a minimum total) would be a new `Discount` type.
 - The backend is the single source of truth for prices. The frontend only displays the returned breakdown.
