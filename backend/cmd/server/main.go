@@ -3,12 +3,10 @@ package main
 
 import (
 	"context"
-	"database/sql"
 	"log"
 	"os"
 
-	_ "modernc.org/sqlite"
-
+	"github.com/gravizz/freshket/backend/internal/database"
 	"github.com/gravizz/freshket/backend/internal/httpapi"
 	"github.com/gravizz/freshket/backend/internal/menu"
 	"github.com/gravizz/freshket/backend/internal/rules"
@@ -18,7 +16,7 @@ func main() {
 	dbPath := getenv("DB_PATH", "freshket.db")
 	addr := ":" + getenv("PORT", "8080")
 
-	db, err := sql.Open("sqlite", dbPath)
+	db, err := database.Open(dbPath)
 	if err != nil {
 		log.Fatalf("open db: %v", err)
 	}

@@ -106,16 +106,20 @@ var ErrInvalidItem = errors.New("invalid item")
 
 var itemCodePattern = regexp.MustCompile(`^[A-Z0-9_]{1,20}$`)
 
+// MaxPrice is the highest price of one set, in satang (THB 1,000,000). With
+// MaxQuantity it keeps every line total far from int64 overflow.
+const MaxPrice Money = 100_000_000
+
 // Validate checks the item: code of 1–20 uppercase letters, digits or
-// underscores; name of 1–60 characters; price of at least one satang.
+// underscores; name of 1–60 characters; price from one satang to MaxPrice.
 func (i Item) Validate() error {
 	switch {
 	case !itemCodePattern.MatchString(i.Code):
 		return fmt.Errorf("%w: code must be 1-20 characters of A-Z, 0-9 or _", ErrInvalidItem)
 	case strings.TrimSpace(i.Name) == "" || utf8.RuneCountInString(i.Name) > 60:
 		return fmt.Errorf("%w: name must be 1-60 characters", ErrInvalidItem)
-	case i.Price < 1:
-		return fmt.Errorf("%w: price must be at least 1 satang", ErrInvalidItem)
+	case i.Price < 1 || i.Price > MaxPrice:
+		return fmt.Errorf("%w: price must be between 1 and %d satang", ErrInvalidItem, MaxPrice)
 	}
 	return nil
 }

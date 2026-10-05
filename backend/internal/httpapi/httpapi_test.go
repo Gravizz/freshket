@@ -8,17 +8,25 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
+	"time"
 
 	_ "modernc.org/sqlite"
 
 	"github.com/gofiber/fiber/v3"
 
+	"github.com/gravizz/freshket/backend/internal/database"
 	"github.com/gravizz/freshket/backend/internal/httpapi"
 	"github.com/gravizz/freshket/backend/internal/menu"
 	"github.com/gravizz/freshket/backend/internal/rules"
 )
+
+// testConfig gives requests room to finish when many tests or goroutines
+// compete for the CPU; Fiber's default of one second is flaky under load.
+var testConfig = fiber.TestConfig{Timeout: 30 * time.Second, FailOnTimeout: true}
 
 func newTestApp(t *testing.T) *fiber.App {
 	t.Helper()
@@ -108,7 +116,7 @@ func postCalculate(t *testing.T, app *fiber.App, body string) (*http.Response, s
 	t.Helper()
 	req := httptest.NewRequest(http.MethodPost, "/api/orders/calculate", strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
-	resp, err := app.Test(req)
+	resp, err := app.Test(req, testConfig)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -204,7 +212,7 @@ func adminRequest(t *testing.T, app *fiber.App, method, path, body string) (*htt
 	t.Helper()
 	req := httptest.NewRequest(method, path, strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
-	resp, err := app.Test(req)
+	resp, err := app.Test(req, testConfig)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -286,6 +294,8 @@ func TestAdminItemRejectsBadInput(t *testing.T) {
 		{"code too long", http.MethodPost, "/api/admin/menu", item(strings.Repeat("A", 21), "X", 100), http.StatusBadRequest},
 		{"code with symbol", http.MethodPost, "/api/admin/menu", item("A-B", "X", 100), http.StatusBadRequest},
 		{"zero price", http.MethodPost, "/api/admin/menu", item("FREE", "X", 0), http.StatusBadRequest},
+		{"price above the limit", http.MethodPost, "/api/admin/menu", item("BIGPRICE", "X", 100_000_001), http.StatusBadRequest},
+		{"update with non-JSON body", http.MethodPut, "/api/admin/menu/RED", `nope`, http.StatusBadRequest},
 		{"empty name", http.MethodPost, "/api/admin/menu", item("NONAME", "", 100), http.StatusBadRequest},
 		{"name too long", http.MethodPost, "/api/admin/menu", item("LONGNAME", strings.Repeat("n", 61), 100), http.StatusBadRequest},
 		{"price is a string", http.MethodPost, "/api/admin/menu", `{"code":"STR","name":"X","price":"45","active":true}`, http.StatusBadRequest},
@@ -414,6 +424,7 @@ func TestAdminRuleRejectsBadInput(t *testing.T) {
 		{"not json", http.MethodPost, "/api/admin/rules", `nope`, http.StatusBadRequest},
 		{"update unknown id", http.MethodPut, "/api/admin/rules/999", `{"name":"x","itemCode":"RED","groupSize":2,"percent":5,"active":true}`, http.StatusNotFound},
 		{"update with a non-numeric id", http.MethodPut, "/api/admin/rules/abc", `{"name":"x","itemCode":"RED","groupSize":2,"percent":5,"active":true}`, http.StatusBadRequest},
+		{"update with non-JSON body", http.MethodPut, "/api/admin/rules/1", `nope`, http.StatusBadRequest},
 		{"update with invalid percent", http.MethodPut, "/api/admin/rules/1", `{"name":"x","itemCode":"RED","groupSize":2,"percent":200,"active":true}`, http.StatusBadRequest},
 	}
 
@@ -454,5 +465,73 @@ func TestFreshDatabaseMatchesTheBrief(t *testing.T) {
 		`{"id":4,"name":"Member 10%","itemCode":"","groupSize":0,"percent":10,"memberOnly":true,"active":true}]`
 	if rulesRaw != wantRules {
 		t.Errorf("rules = %s\nwant   %s", rulesRaw, wantRules)
+	}
+}
+
+// Admin writes and customer calculations hit the same SQLite file at once;
+// none of them may fail with "database is locked".
+func TestConcurrentWritesAndCalculationsDoNotFail(t *testing.T) {
+	db, err := database.Open(filepath.Join(t.TempDir(), "concurrent.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { db.Close() })
+	menuRepo, rulesRepo := menu.NewRepository(db), rules.NewRepository(db)
+	for _, migrate := range []func(context.Context) error{menuRepo.Migrate, rulesRepo.Migrate} {
+		if err := migrate(context.Background()); err != nil {
+			t.Fatal(err)
+		}
+	}
+	app := httpapi.New(menuRepo, rulesRepo)
+
+	const requests = 400
+	var (
+		wg     sync.WaitGroup
+		mu     sync.Mutex
+		failed []string
+		sem    = make(chan struct{}, 64)
+	)
+	for i := 0; i < requests; i++ {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			sem <- struct{}{}
+			defer func() { <-sem }()
+
+			var resp *http.Response
+			var raw string
+			if i%5 == 0 {
+				body := fmt.Sprintf(`{"name":"r%d","itemCode":"RED","groupSize":2,"percent":5,"memberOnly":false,"active":true}`, i)
+				resp, raw = adminRequest(t, app, http.MethodPost, "/api/admin/rules", body)
+			} else {
+				resp, raw = postCalculate(t, app, `{"items":[{"code":"RED","qty":2}],"member":true}`)
+			}
+			if resp.StatusCode >= 500 {
+				mu.Lock()
+				failed = append(failed, fmt.Sprintf("%d %s", resp.StatusCode, raw))
+				mu.Unlock()
+			}
+		}(i)
+	}
+	wg.Wait()
+
+	if len(failed) > 0 {
+		t.Errorf("%d of %d requests failed, e.g. %s", len(failed), requests, failed[0])
+	}
+}
+
+func TestAdminItemAcceptsPriceAtTheLimit(t *testing.T) {
+	app := newTestApp(t)
+
+	resp, raw := adminRequest(t, app, http.MethodPost, "/api/admin/menu",
+		`{"code":"MAXPRICE","name":"Priciest set","price":100000000,"active":true}`)
+	if resp.StatusCode != http.StatusCreated {
+		t.Fatalf("status = %d, want 201: %s", resp.StatusCode, raw)
+	}
+
+	// The largest allowed price times the largest allowed quantity must not overflow.
+	resp, calcRaw := postCalculate(t, app, `{"items":[{"code":"MAXPRICE","qty":10000}],"member":true}`)
+	if resp.StatusCode != http.StatusOK || !strings.Contains(calcRaw, `"subtotal":1000000000000`) {
+		t.Errorf("calculate = %d %s, want 200 with subtotal 1000000000000", resp.StatusCode, calcRaw)
 	}
 }
