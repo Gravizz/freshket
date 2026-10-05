@@ -9,11 +9,11 @@ import (
 // seedRules is the store's promotions expressed as data: same-item pairs of
 // Orange, Pink and Green at 5%, then 10% for members.
 func seedRules() []pricing.Rule {
-	pair := func(id int64, code string) pricing.Rule {
-		return pricing.Rule{ID: id, Name: "pairs", ItemCode: code, GroupSize: 2, Percent: 5, Active: true}
+	pair := func(id int64, name, code string) pricing.Rule {
+		return pricing.Rule{ID: id, Name: name, Bundle: []pricing.Component{{ItemCode: code, Qty: 2}}, Percent: 5, Active: true}
 	}
 	return []pricing.Rule{
-		pair(1, "ORANGE"), pair(2, "PINK"), pair(3, "GREEN"),
+		pair(1, "Orange pairs", "ORANGE"), pair(2, "Pink pairs", "PINK"), pair(3, "Green pairs", "GREEN"),
 		{ID: 4, Name: "Member 10%", Percent: 10, MemberOnly: true, Active: true},
 	}
 }
@@ -46,7 +46,7 @@ func TestRulesReproduceTheStoreBehavior(t *testing.T) {
 	t.Run("labels and amounts: pair first, member second", func(t *testing.T) {
 		got := mustCalculate(t, calc, pricing.Order{Lines: []pricing.Line{{Code: "ORANGE", Qty: 5}}, Member: true})
 		want := []pricing.AppliedDiscount{
-			{Label: "Orange set pairs ×2 (5%)", Amount: 2400},
+			{Label: "Orange pairs ×2 (5%)", Amount: 2400},
 			{Label: "Member 10%", Amount: 5760},
 		}
 		if len(got.Discounts) != len(want) {
@@ -62,7 +62,7 @@ func TestRulesReproduceTheStoreBehavior(t *testing.T) {
 
 func TestFullDiscountLeavesNothingForMember(t *testing.T) {
 	rules := []pricing.Rule{
-		{ID: 1, Name: "free red", ItemCode: "RED", GroupSize: 1, Percent: 100, Active: true},
+		{ID: 1, Name: "free red", Bundle: []pricing.Component{{ItemCode: "RED", Qty: 1}}, Percent: 100, Active: true},
 		{ID: 2, Name: "Member 10%", Percent: 10, MemberOnly: true, Active: true},
 	}
 
@@ -83,7 +83,7 @@ func TestMemberRuleSkipsEmptyOrder(t *testing.T) {
 }
 
 func TestItemRuleCanRequireMembership(t *testing.T) {
-	rules := []pricing.Rule{{ID: 1, Name: "members pairs", ItemCode: "ORANGE", GroupSize: 2, Percent: 5, MemberOnly: true, Active: true}}
+	rules := []pricing.Rule{{ID: 1, Name: "members pairs", Bundle: []pricing.Component{{ItemCode: "ORANGE", Qty: 2}}, Percent: 5, MemberOnly: true, Active: true}}
 	calc := pricing.NewCalculator(pricing.Discounts(rules)...)
 	lines := []pricing.Line{{Code: "ORANGE", Qty: 2}}
 
@@ -100,8 +100,8 @@ func TestItemRuleCanRequireMembership(t *testing.T) {
 func TestDiscountsApplyItemRulesBeforeOrderRulesAndSkipInactive(t *testing.T) {
 	rules := []pricing.Rule{
 		{ID: 1, Name: "Member 10%", Percent: 10, MemberOnly: true, Active: true},
-		{ID: 3, Name: "pairs", ItemCode: "ORANGE", GroupSize: 2, Percent: 5, Active: true},
-		{ID: 2, Name: "pairs", ItemCode: "PINK", GroupSize: 2, Percent: 5, Active: false},
+		{ID: 3, Name: "Orange pairs", Bundle: []pricing.Component{{ItemCode: "ORANGE", Qty: 2}}, Percent: 5, Active: true},
+		{ID: 2, Name: "Pink pairs", Bundle: []pricing.Component{{ItemCode: "PINK", Qty: 2}}, Percent: 5, Active: false},
 	}
 
 	got := mustCalculate(t, pricing.NewCalculator(pricing.Discounts(rules)...), pricing.Order{
@@ -110,7 +110,7 @@ func TestDiscountsApplyItemRulesBeforeOrderRulesAndSkipInactive(t *testing.T) {
 	})
 
 	want := []pricing.AppliedDiscount{
-		{Label: "Orange set pairs ×1 (5%)", Amount: 1200},
+		{Label: "Orange pairs ×1 (5%)", Amount: 1200},
 		{Label: "Member 10%", Amount: 3880},
 	}
 	if len(got.Discounts) != len(want) || got.Discounts[0] != want[0] || got.Discounts[1] != want[1] {
@@ -120,23 +120,23 @@ func TestDiscountsApplyItemRulesBeforeOrderRulesAndSkipInactive(t *testing.T) {
 
 func TestDiscountsOrderRulesByID(t *testing.T) {
 	rules := []pricing.Rule{
-		{ID: 9, Name: "late", ItemCode: "RED", GroupSize: 1, Percent: 10, Active: true},
-		{ID: 2, Name: "early", ItemCode: "RED", GroupSize: 1, Percent: 20, Active: true},
+		{ID: 9, Name: "late", Bundle: []pricing.Component{{ItemCode: "RED", Qty: 1}}, Percent: 10, Active: true},
+		{ID: 2, Name: "early", Bundle: []pricing.Component{{ItemCode: "RED", Qty: 1}}, Percent: 20, Active: true},
 	}
-	// Both rules look at the same sets; the lower ID is listed first.
+	// Both rules want the same set; the lower ID claims it.
 	got := mustCalculate(t, pricing.NewCalculator(pricing.Discounts(rules)...), pricing.Order{Lines: []pricing.Line{{Code: "RED", Qty: 1}}})
 
-	if len(got.Discounts) != 2 || got.Discounts[0].Label != "Red set early ×1 (20%)" {
-		t.Errorf("discounts = %+v, want the lower-ID rule first", got.Discounts)
+	if len(got.Discounts) != 1 || got.Discounts[0].Label != "early ×1 (20%)" {
+		t.Errorf("discounts = %+v, want only the lower-ID rule", got.Discounts)
 	}
 }
 
 func TestRuleGroupSize(t *testing.T) {
-	rules := []pricing.Rule{{ID: 1, Name: "triple", ItemCode: "ORANGE", GroupSize: 3, Percent: 10, Active: true}}
+	rules := []pricing.Rule{{ID: 1, Name: "triple", Bundle: []pricing.Component{{ItemCode: "ORANGE", Qty: 3}}, Percent: 10, Active: true}}
 	calc := pricing.NewCalculator(pricing.Discounts(rules)...)
 
 	seven := mustCalculate(t, calc, pricing.Order{Lines: []pricing.Line{{Code: "ORANGE", Qty: 7}}})
-	if len(seven.Discounts) != 1 || seven.Discounts[0].Amount != 7200 || seven.Discounts[0].Label != "Orange set triple ×2 (10%)" {
+	if len(seven.Discounts) != 1 || seven.Discounts[0].Amount != 7200 || seven.Discounts[0].Label != "triple ×2 (10%)" {
 		t.Errorf("seven oranges: discounts = %+v, want one of 7200 labelled triple ×2 (10%%)", seven.Discounts)
 	}
 	two := mustCalculate(t, calc, pricing.Order{Lines: []pricing.Line{{Code: "ORANGE", Qty: 2}}})

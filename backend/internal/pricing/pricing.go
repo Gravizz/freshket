@@ -58,6 +58,13 @@ type Discount interface {
 	Apply(lines []PricedLine, member bool, runningTotal Money) (AppliedDiscount, bool)
 }
 
+// Claimer is a Discount that uses up the sets it discounts, so that later
+// discounts cannot discount the same sets again. Claim returns the lines
+// without those sets and must not modify its argument.
+type Claimer interface {
+	Claim(lines []PricedLine) []PricedLine
+}
+
 var (
 	// ErrUnknownItem is returned when an order line references a code not on the menu.
 	ErrUnknownItem = errors.New("unknown item")
@@ -96,6 +103,9 @@ func (c *Calculator) Calculate(menu Menu, order Order) (Breakdown, error) {
 		}
 		b.Discounts = append(b.Discounts, applied)
 		b.Total -= applied.Amount
+		if cl, ok := d.(Claimer); ok {
+			lines = cl.Claim(lines)
+		}
 	}
 	return b, nil
 }
