@@ -30,9 +30,9 @@ Dependencies point inward: `httpapi` → `pricing`, `menu` and `rules`. `pricing
 Menu prices in THB per set: Red 50, Green 40, Blue 30, Yellow 50, Pink 80, Purple 90, Orange 120.
 
 1. **Subtotal** = sum of price × quantity.
-2. **Item rule** (`ItemCode` set): every complete group of `GroupSize` sets of that item gets `Percent` off those sets; leftovers pay full price. The seed has 5% pair rules (`GroupSize` 2) for Orange, Pink and Green.
-3. **Whole-order rule** (`ItemCode` empty, `GroupSize` 0): `Percent` off the running total. The seed has the 10% member rule (`MemberOnly`).
-4. Item rules apply first, then whole-order rules, each by ascending rule ID. `Active` and `MemberOnly` gate every rule.
+2. **Bundle rule** (`Bundle` non-empty, a list of `{ItemCode, Qty}` components): the number of complete bundles is the fewest groups any component can fill (`min(qty ÷ component qty)`); each complete bundle gets `Percent` off the price of its sets; leftovers pay full price. Example: Bundle A = Green ×2 + Red ×1 at 12%. A one-component bundle is a plain "every N sets of one item" rule, so the seed 5% pair rules for Orange, Pink and Green are bundles of one item with `Qty` 2. A set belongs to at most one bundle: a bundle that applies claims its sets, and later rules only see the rest.
+3. **Whole-order rule** (`Bundle` empty): `Percent` off the running total. The seed has the 10% member rule (`MemberOnly`).
+4. Bundle rules apply first, larger bundles first (bigger sum of component quantities), ties by ascending rule ID; then whole-order rules by ascending rule ID. `Active` and `MemberOnly` gate every rule.
 
 Rules and menu items live in SQLite, so the seed rows above are only the starting data. The golden cases below use them.
 Pin these golden cases as table-driven tests:
@@ -49,8 +49,8 @@ Pin these golden cases as table-driven tests:
 Implementation rules:
 
 - **Money is integer satang** (`int64`, 1 THB = 100 satang) everywhere: domain, DB, and API. When a percentage produces a fraction of a satang, round half-up at each discount step. State this in the README.
-- Every discount implements one small interface, `Discount.Apply(lines, member, runningTotal) (AppliedDiscount, bool)`, and `pricing.Rule` is its only data-driven implementation. A condition is only item + group size (+ member flag) and an effect is only a whole-number percent. This is the **extensibility** reviewers look for, so stop there: no expression language and no other condition types.
-- Labels: item rule `"<Item.Name> <Rule.Name> ×<groups> (<Percent>%)"`, whole-order rule = `Rule.Name`.
+- Every discount implements one small interface, `Discount.Apply(lines, member, runningTotal) (AppliedDiscount, bool)`, and `pricing.Rule` is its only data-driven implementation. A condition is only a bundle of item × qty components (+ member flag) and an effect is only a whole-number percent. This is the **extensibility** reviewers look for, so stop there: no expression language and no other condition types.
+- Labels: bundle rule `"<Rule.Name> ×<bundles> (<Percent>%)"`, whole-order rule = `Rule.Name`.
 - Items and rules are deactivated (`active=false`), never deleted. Inactive items are unknown to ordering; inactive rules never apply.
 - Item code is 1–20 characters of `A-Z`, `0-9`, `_`; name 1–60 characters; price from 1 satang to `MaxPrice` (100,000,000 satang). Quantity per code is capped at `MaxQuantity` (10,000) so totals cannot overflow.
 - The calculator takes the menu as input. It never loads the menu itself, so tests need no DB.
@@ -62,7 +62,7 @@ Implementation rules:
 
 - `GET /api/menu` returns `[{ code, name, price }]`, with price in satang.
 - `GET /api/admin/menu` lists all items (`active` included); `POST /api/admin/menu` and `PUT /api/admin/menu/:code` take `{ code, name, price, active }` (the code in the path wins on `PUT`).
-- `GET /api/admin/rules` lists all rules; `POST /api/admin/rules` and `PUT /api/admin/rules/:id` take `{ name, itemCode, groupSize, percent, memberOnly, active }`.
+- `GET /api/admin/rules` lists all rules; `POST /api/admin/rules` and `PUT /api/admin/rules/:id` take `{ name, bundle: [{ itemCode, qty }], percent, memberOnly, active }` (an empty or missing `bundle` is a whole-order rule).
 - Admin routes are intentionally unauthenticated: this is a simulation.
 - `POST /api/orders/calculate` takes `{ items: [{ code, qty }], member: bool }` and returns `{ subtotal, discounts: [{ label, amount }], total }`, all in satang.
 
@@ -94,4 +94,4 @@ cd frontend && npm test                # Vitest + React Testing Library
 
 ## README (deliverable)
 
-Keep `README.md` current. It is what the reviewer reads first. It covers: prerequisites, run and test commands, the API contract, **Assumptions** (pair rule, discount order, rounding), and how an admin adds an item or a promotion.
+Keep `README.md` current. It is what the reviewer reads first. It covers: prerequisites, run and test commands, the API contract, **Assumptions** (bundles, discount order, rounding), and how an admin adds an item or a promotion.

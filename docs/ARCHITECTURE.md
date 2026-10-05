@@ -54,18 +54,19 @@ flowchart LR
 | `cmd/server` | Reads `PORT` and `DB_PATH`, opens SQLite through `database.Open`, runs both migrations, starts Fiber |
 | `internal/database` | Opens the SQLite file with a 5 second busy timeout and WAL, so concurrent admin writes and customer calculations do not fail with `SQLITE_BUSY` |
 | `internal/httpapi` | Routes, JSON DTOs, validation-to-status mapping. Loads items and rules per request. `httpapi.go` has the public routes, `admin_menu.go` and `admin_rules.go` the admin ones |
-| `internal/pricing` | `Calculator`, the `Discount` interface, the data-driven `Rule`, validation, rounding |
+| `internal/pricing` | `Calculator`, the `Discount` and `Claimer` interfaces, the data-driven `Rule` (bundle conditions), validation, rounding |
 | `internal/menu` | Menu items in SQLite: list active or all, create, update, seed |
-| `internal/rules` | Discount rules in SQLite: list active or all, create, update, seed |
+| `internal/rules` | Discount rules and their bundle components in SQLite: list active or all, create, update (in a transaction), seed |
 | `frontend/src` | `Root` (hash route + Admin/Store button), `App` (store), `Admin`, `api.ts` |
 
 ## 2. ER diagram
 
-Two tables. `discount_rules.item_code` refers to `menu_items.code` by value, with no foreign key. An empty `item_code` means the rule applies to the whole order. Rows are never deleted, only switched off with `active = 0`.
+Three tables. A rule's bundle lives in `rule_items`, one row per component; `rule_items.item_code` refers to `menu_items.code` by value, with no foreign key. A rule without `rule_items` rows applies to the whole order. Rows are never deleted, only switched off with `active = 0` (a rule's components are replaced when the rule is edited).
 
 ```mermaid
 erDiagram
-    MENU_ITEMS ||--o{ DISCOUNT_RULES : "targeted by item_code (optional, no FK)"
+    DISCOUNT_RULES ||--o{ RULE_ITEMS : "bundle components"
+    MENU_ITEMS ||--o{ RULE_ITEMS : "named by item_code (no FK)"
 
     MENU_ITEMS {
         TEXT code PK "1-20 chars of A-Z 0-9 _ ; immutable"
@@ -77,11 +78,15 @@ erDiagram
     DISCOUNT_RULES {
         INTEGER id PK "autoincrement; sets rule order"
         TEXT name "1-60 chars; used in the label"
-        TEXT item_code "item rule if set, empty = whole order"
-        INTEGER group_size "1-10000 for item rules, 0 for whole order"
         INTEGER percent "whole number 1-100"
         INTEGER member_only "1 = members only"
         INTEGER active "1 applies, 0 ignored"
+    }
+
+    RULE_ITEMS {
+        INTEGER rule_id PK "references discount_rules.id"
+        TEXT item_code PK "an item of the bundle, once per rule"
+        INTEGER qty "1-10000 sets of that item per bundle"
     }
 ```
 
@@ -90,7 +95,7 @@ Seed data. Rules are inserted only when `discount_rules` is empty; menu items us
 | Table | Rows |
 |---|---|
 | `menu_items` | RED 50, GREEN 40, BLUE 30, YELLOW 50, PINK 80, PURPLE 90, ORANGE 120 THB |
-| `discount_rules` | `pairs` 5% every 2 × ORANGE, PINK, GREEN; `Member 10%` 10% whole order, members only |
+| `discount_rules` + `rule_items` | `Orange pairs`, `Pink pairs`, `Green pairs`: 5%, a bundle of 2 × that item; `Member 10%`: 10% whole order (no bundle), members only |
 
 ## 3. Request flows
 
@@ -153,9 +158,9 @@ sequenceDiagram
     end
 
     A->>UI: submit "Add rule"
-    UI->>H: POST /api/admin/rules {name, itemCode, groupSize, percent, memberOnly, active}
+    UI->>H: POST /api/admin/rules {name, bundle: [{itemCode, qty}], percent, memberOnly, active}
     H->>P: Rule.Validate()
-    H->>M: ListAll() to check itemCode exists
+    H->>M: ListAll() to check every bundle itemCode exists
     alt invalid or unknown item
         H-->>UI: 400
     else valid
@@ -172,7 +177,7 @@ After either call the next customer calculation uses the new data.
 flowchart TD
     A["main()"] --> B["database.Open DB_PATH: busy timeout + WAL"]
     B --> C["menu.Migrate: create table, insert missing seed items"]
-    C --> D["rules.Migrate: create table, seed 4 rules if empty"]
+    C --> D["rules.Migrate: create tables, seed 4 rules if empty"]
     D --> E["httpapi.New menuRepo rulesRepo"]
     E --> F["Listen on PORT"]
 ```
@@ -216,10 +221,10 @@ flowchart TD
 `pricing.Discounts(rules)` builds the list the calculator walks:
 
 1. Drop inactive rules.
-2. **Item rules** (with `item_code`) come first, then **whole-order rules**.
-3. Inside each group, ascending rule `id`.
+2. **Bundle rules** (with `rule_items`) come first, then **whole-order rules**.
+3. Bundle rules: bigger bundle first (sum of component quantities), ties by ascending rule `id`. Whole-order rules: ascending `id`.
 
-Item rules go first so the whole-order percent applies to the already-reduced total.
+Bundle rules go first so the whole-order percent applies to the already-reduced total. Bigger bundles go first because a bundle **claims** its sets: after a bundle rule applies, `Calculator` calls `Claim` on it and later rules only see the unclaimed sets, so one set is never discounted twice. Going biggest first lets "Green ×2 + Red ×1" win the Greens over a plain Green pair rule.
 
 ### 4.3 One rule: `Rule.Apply`
 
@@ -227,20 +232,18 @@ Item rules go first so the whole-order percent applies to the already-reduced to
 flowchart TD
     S(["Apply lines, member, running total"]) --> M{"member_only and not member?"}
     M -- yes --> No(["no discount"])
-    M -- no --> K{"item_code empty?"}
+    M -- no --> K{"bundle empty?"}
 
     K -- "yes: whole order" --> W["amount = percentOf running total, percent"]
     W --> W0{"amount is 0?"}
     W0 -- yes --> No
     W0 -- no --> WL(["label = rule name<br/>amount"])
 
-    K -- "no: item rule" --> F{"line for item_code exists?"}
-    F -- no --> No
-    F -- yes --> G["groups = qty div group_size"]
-    G --> G0{"groups is 0?"}
+    K -- "no: bundle rule" --> G["bundles = min over components of unclaimed qty div component qty"]
+    G --> G0{"bundles is 0?"}
     G0 -- yes --> No
-    G0 -- no --> IA["amount = percentOf price x groups x group_size, percent"]
-    IA --> IL(["label = item name + rule name + x groups + percent<br/>amount"])
+    G0 -- no --> IA["amount = percentOf sum of price x component qty x bundles, percent"]
+    IA --> IL(["label = rule name + x bundles + percent<br/>amount, sets are claimed"])
 ```
 
 ### 4.4 Rounding
@@ -260,39 +263,48 @@ Menu: Orange 12000 satang. With the seed rules:
 | Step | Computation | Running total |
 |---|---|---|
 | Subtotal | 5 × 12000 | 60000 |
-| `pairs` (item rule) | groups = 5 div 2 = 2, paired sets = 4, 5% of 48000 | 60000 − 2400 = **57600** |
+| `Orange pairs` (bundle of 2 × ORANGE) | bundles = 5 div 2 = 2, covered sets = 4, 5% of 48000 | 60000 − 2400 = **57600** |
 | `Member 10%` (whole order) | 10% of 57600 | 57600 − 5760 = **51840** |
 
-Result: ฿518.40, discount lines `Orange set pairs ×2 (5%)` −24.00 and `Member 10%` −57.60.
+Result: ฿518.40, discount lines `Orange pairs ×2 (5%)` −24.00 and `Member 10%` −57.60.
 
 **Green × 2, Pink × 3, non-member**
 
 | Step | Computation | Running total |
 |---|---|---|
 | Subtotal | 2 × 4000 + 3 × 8000 | 32000 |
-| `pairs` PINK (rule id 2) | groups = 1, 5% of 16000 | 32000 − 800 |
-| `pairs` GREEN (rule id 3) | groups = 1, 5% of 8000 | 31200 − 400 = **30800** |
+| `Pink pairs` (rule id 2) | bundles = 1, 5% of 16000 | 32000 − 800 |
+| `Green pairs` (rule id 3) | bundles = 1, 5% of 8000 | 31200 − 400 = **30800** |
 | Member rule | not a member | skipped |
 
 Result: ฿308.00. Discount lines follow rule ID, so PINK (800) is listed before GREEN (400).
 
 **Rounding case**: an item priced at 1005 satang, one set, member → 10% of 1005 = 100.5, rounded half-up to 101, total 904.
 
-**A rule added from the admin page**: item BLACK 4500, rule `triple` = every 3 × BLACK, 10%. Order 3 × BLACK → subtotal 13500, discount `Black set triple ×1 (10%)` −1350, total 12150.
+**A bundle added from the admin page**: Bundle A = 2 × GREEN + 1 × RED, 12% (rule id 5). Menu: Green 4000, Red 5000.
+
+Green × 4, Red × 1, non-member:
+
+| Step | Computation | Running total |
+|---|---|---|
+| Subtotal | 4 × 4000 + 1 × 5000 | 21000 |
+| `Bundle A` (3 sets, goes before the 2-set pair rule) | bundles = min(4 div 2, 1 div 1) = 1, 12% of 8000 + 5000 | 21000 − 1560 = 19440; claims Green × 2 and Red × 1 |
+| `Green pairs` (rule id 3) | 2 unclaimed Green, bundles = 1, 5% of 8000 | 19440 − 400 = **19040** |
+
+Result: ฿190.40, discount lines `Bundle A ×1 (12%)` −15.60 and `Green pairs ×1 (5%)` −4.00. Green × 2 + Red × 1 alone gives only the Bundle A line: ฿114.40.
 
 ## 5. Rule model
 
-A rule is one row. Its condition is only an item and a group size (plus an optional members-only flag). Its effect is only a whole-number percent.
+A rule is one `discount_rules` row plus its `rule_items` rows. Its condition is only a bundle of item × quantity components (plus an optional members-only flag). Its effect is only a whole-number percent. A bundle of one item with quantity N is the plain "every N sets of one item" rule.
 
-| Field | Item rule | Whole-order rule |
+| Field | Bundle rule | Whole-order rule |
 |---|---|---|
-| `item_code` | an existing item code | empty |
-| `group_size` | 1 to 10000: every complete group gets the percent off | must be 0 |
-| `percent` | 1 to 100 | 1 to 100, taken off the running total |
+| `rule_items` | one or more components, each an existing item code once, qty 1 to 10000 | none |
+| `percent` | 1 to 100, taken off the sets in every complete bundle | 1 to 100, taken off the running total |
 | `member_only` | optional | optional (the seed member rule sets it) |
-| Label | `<Item name> <Rule name> ×<groups> (<percent>%)` | the rule name, verbatim |
+| Label | `<Rule name> ×<bundles> (<percent>%)` | the rule name, verbatim |
 
-`pricing.Rule` implements the `Discount` interface, so `Calculator` does not know rules exist. A new kind of condition, for example a minimum total, would be a new type implementing `Discount` and nothing else changes.
+`pricing.Rule` implements the `Discount` interface (and `Claimer`, to use up the sets it discounts), so `Calculator` does not know rules exist. A new kind of condition, for example a minimum total, would be a new type implementing `Discount` and nothing else changes.
 
 ```mermaid
 classDiagram
@@ -300,16 +312,24 @@ classDiagram
         <<interface>>
         +Apply(lines, member, runningTotal) AppliedDiscount, bool
     }
+    class Claimer {
+        <<interface>>
+        +Claim(lines) PricedLine[]
+    }
+    class Component {
+        +string ItemCode
+        +int Qty
+    }
     class Rule {
         +int64 ID
         +string Name
-        +string ItemCode
-        +int GroupSize
+        +Component[] Bundle
         +int Percent
         +bool MemberOnly
         +bool Active
         +Validate() error
         +Apply(lines, member, runningTotal) AppliedDiscount, bool
+        +Claim(lines) PricedLine[]
     }
     class Calculator {
         -discounts Discount[]
@@ -321,6 +341,8 @@ classDiagram
         +Money Total
     }
     Discount <|.. Rule
+    Claimer <|.. Rule
+    Rule o-- Component : bundle
     Calculator o-- Discount : ordered list
     Calculator ..> Breakdown : returns
 ```
@@ -333,8 +355,8 @@ classDiagram
 | Negative quantity, or more than 10000 of one item | `ErrInvalidQuantity` | 400 |
 | Malformed JSON, or a field of the wrong type | body bind | 400 |
 | Invalid item (bad code, empty name, price below 1) | `ErrInvalidItem` | 400 |
-| Invalid rule (percent outside 1-100, wrong group size, empty name) | `ErrInvalidRule` | 400 |
-| Rule refers to an item code that does not exist | `checkRule` | 400 |
+| Invalid rule (percent outside 1-100, bundle quantity out of range or item listed twice, empty name) | `ErrInvalidRule` | 400 |
+| Bundle refers to an item code that does not exist | `checkRule` | 400 |
 | Duplicate item code on create | `menu.ErrDuplicate` | 409 |
 | Update of a missing item or rule | `menu.ErrNotFound`, `rules.ErrNotFound` | 404 |
 | Non-numeric rule id in the path | path parse | 400 |
