@@ -40,11 +40,17 @@ export function calculate(items: OrderLine[], member: boolean): Promise<Breakdow
   })
 }
 
+// A bundle is the items (and how many of each) a promotion needs; an empty
+// bundle means the rule discounts the whole order.
+export type BundleItem = {
+  itemCode: string
+  qty: number
+}
+
 export type Rule = {
   id: number
   name: string
-  itemCode: string
-  groupSize: number
+  bundle: BundleItem[]
   percent: number
   memberOnly: boolean
   active: boolean

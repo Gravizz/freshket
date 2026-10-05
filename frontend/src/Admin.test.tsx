@@ -18,6 +18,7 @@ describe('Admin', () => {
   beforeEach(() => {
     vi.mocked(api.fetchAdminMenu).mockResolvedValue([
       { code: 'RED', name: 'Red set', price: 5000, active: true },
+      { code: 'GREEN', name: 'Green set', price: 4000, active: true },
     ])
     vi.mocked(api.fetchRules).mockResolvedValue([])
   })
@@ -43,27 +44,75 @@ describe('Admin', () => {
     expect(await screen.findByText('#E05252')).toBeInTheDocument()
   })
 
-  it('lets an admin add a discount rule for an item', async () => {
+  // fillBundleA builds "Green ×2 + Red ×1" in the rule form.
+  const fillBundleA = async (user: ReturnType<typeof userEvent.setup>) => {
+    await user.click(screen.getByRole('button', { name: 'Add item to bundle' }))
+    await user.click(screen.getByRole('button', { name: 'Add item to bundle' }))
+    await user.selectOptions(screen.getByLabelText('Bundle item 1'), 'GREEN')
+    await user.type(screen.getByLabelText('Bundle quantity 1'), '2')
+    await user.selectOptions(screen.getByLabelText('Bundle item 2'), 'RED')
+    await user.type(screen.getByLabelText('Bundle quantity 2'), '1')
+    await user.type(screen.getByLabelText('Percent'), '12')
+  }
+
+  it('lets an admin build a bundle rule', async () => {
     const user = userEvent.setup()
     vi.mocked(api.createRule).mockImplementation(async (rule) => ({ ...rule, id: 7 }))
     render(<Admin />)
     expect(await screen.findByText('RED')).toBeInTheDocument()
 
-    await user.type(screen.getByLabelText('Rule name'), 'triple')
-    await user.selectOptions(screen.getByLabelText('Rule item'), 'RED')
-    await user.type(screen.getByLabelText('Group size'), '3')
-    await user.type(screen.getByLabelText('Percent'), '10')
+    await user.type(screen.getByLabelText('Rule name'), 'Bundle A')
+    await fillBundleA(user)
     await user.click(screen.getByRole('button', { name: 'Add rule' }))
 
     expect(api.createRule).toHaveBeenCalledWith({
-      name: 'triple',
-      itemCode: 'RED',
-      groupSize: 3,
-      percent: 10,
+      name: 'Bundle A',
+      bundle: [
+        { itemCode: 'GREEN', qty: 2 },
+        { itemCode: 'RED', qty: 1 },
+      ],
+      percent: 12,
       memberOnly: false,
       active: true,
     })
-    expect(await screen.findByText('triple')).toBeInTheDocument()
+    expect(await screen.findByText('Bundle A')).toBeInTheDocument()
+    expect(screen.getByText('2 × Green set + 1 × Red set')).toBeInTheDocument()
+  })
+
+  it('previews the bundle before saving', async () => {
+    const user = userEvent.setup()
+    render(<Admin />)
+    expect(await screen.findByText('RED')).toBeInTheDocument()
+
+    await fillBundleA(user)
+
+    expect(screen.getByText(/Preview/).parentElement).toHaveTextContent('2 × Green set + 1 × Red set')
+    expect(screen.getByText(/Preview/).parentElement).toHaveTextContent('12% off')
+  })
+
+  it('removes a bundle row', async () => {
+    const user = userEvent.setup()
+    render(<Admin />)
+    expect(await screen.findByText('RED')).toBeInTheDocument()
+    await user.click(screen.getByRole('button', { name: 'Add item to bundle' }))
+    await user.click(screen.getByRole('button', { name: 'Add item to bundle' }))
+
+    await user.click(screen.getByRole('button', { name: 'Remove bundle item 1' }))
+
+    expect(screen.getAllByLabelText(/^Bundle item/)).toHaveLength(1)
+  })
+
+  it('shows the server error when a rule is rejected', async () => {
+    const user = userEvent.setup()
+    vi.mocked(api.createRule).mockRejectedValue(new Error('invalid rule: percent must be between 1 and 100'))
+    render(<Admin />)
+    expect(await screen.findByText('RED')).toBeInTheDocument()
+
+    await user.type(screen.getByLabelText('Rule name'), 'bad')
+    await user.type(screen.getByLabelText('Percent'), '0')
+    await user.click(screen.getByRole('button', { name: 'Add rule' }))
+
+    expect(await screen.findByRole('alert')).toHaveTextContent('percent must be between 1 and 100')
   })
 
   it('adds a whole-order rule for members when no item is chosen', async () => {
@@ -79,8 +128,7 @@ describe('Admin', () => {
 
     expect(api.createRule).toHaveBeenCalledWith({
       name: 'Gold member',
-      itemCode: '',
-      groupSize: 0,
+      bundle: [],
       percent: 15,
       memberOnly: true,
       active: true,
@@ -116,7 +164,7 @@ describe('Admin', () => {
 
   it('pauses a discount rule with its active switch', async () => {
     const user = userEvent.setup()
-    const rule = { id: 3, name: 'Member', itemCode: '', groupSize: 0, percent: 10, memberOnly: true, active: true }
+    const rule = { id: 3, name: 'Member', bundle: [], percent: 10, memberOnly: true, active: true }
     vi.mocked(api.fetchRules).mockResolvedValue([rule])
     vi.mocked(api.updateRule).mockImplementation(async (r) => r)
     render(<Admin />)

@@ -20,8 +20,7 @@ export default function Admin() {
   const [price, setPrice] = useState('')
   const [rules, setRules] = useState<Rule[]>([])
   const [ruleName, setRuleName] = useState('')
-  const [ruleItem, setRuleItem] = useState('')
-  const [groupSize, setGroupSize] = useState('')
+  const [bundleRows, setBundleRows] = useState<BundleRow[]>([])
   const [percent, setPercent] = useState('')
   const [memberOnly, setMemberOnly] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -58,16 +57,14 @@ export default function Admin() {
     return run(async () => {
       const created = await createRule({
         name: ruleName,
-        itemCode: ruleItem,
-        groupSize: ruleItem ? parseInt(groupSize, 10) : 0,
+        bundle: bundleRows.map((row) => ({ itemCode: row.itemCode, qty: parseInt(row.qty, 10) })),
         percent: parseInt(percent, 10),
         memberOnly,
         active: true,
       })
       setRules((list) => [...list, created])
       setRuleName('')
-      setRuleItem('')
-      setGroupSize('')
+      setBundleRows([])
       setPercent('')
       setMemberOnly(false)
       return `Rule “${created.name}” is live`
@@ -106,7 +103,7 @@ export default function Admin() {
     })
 
   const itemName = (itemCode: string) => items.find((it) => it.code === itemCode)?.name ?? itemCode
-  const preview = describeRule(ruleItem ? itemName(ruleItem) : '', groupSize, percent, memberOnly)
+  const preview = describeRule(bundleRows, itemName, percent, memberOnly)
 
   return (
     <main className="mx-auto max-w-6xl px-4 pb-20 sm:px-6">
@@ -192,7 +189,7 @@ export default function Admin() {
           </form>
         </Panel>
 
-        <Panel title="Discount rules" subtitle="Item rules apply first, then whole-order rules." delay={120}>
+        <Panel title="Discount rules" subtitle="Bundles apply first, biggest first, then whole-order rules." delay={120}>
           <ul className="divide-y divide-black/5">
             {rules.map((rule) => (
               <li
@@ -202,14 +199,14 @@ export default function Admin() {
                 <span
                   aria-hidden
                   className="grid size-9 shrink-0 place-items-center rounded-xl font-mono text-xs font-semibold text-white"
-                  style={{ background: rule.itemCode ? itemColor(rule.itemCode) : 'var(--color-fk-600)' }}
+                  style={{ background: rule.bundle.length ? itemColor(rule.bundle[0].itemCode) : 'var(--color-fk-600)' }}
                 >
                   {rule.percent}%
                 </span>
                 <div className="min-w-0 flex-1">
                   <p className="truncate font-medium">{rule.name}</p>
                   <p className="text-xs text-ink/55">
-                    {rule.itemCode ? `Every ${rule.groupSize} × ${itemName(rule.itemCode)}` : 'Whole order'}
+                    {rule.bundle.length ? describeBundle(rule.bundle, itemName) : 'Whole order'}
                   </p>
                 </div>
                 {rule.memberOnly && (
@@ -218,7 +215,7 @@ export default function Admin() {
                   </span>
                 )}
                 <Switch
-                  label={rule.itemCode ? `${rule.name} (${itemName(rule.itemCode)}) active` : `${rule.name} active`}
+                  label={`${rule.name} active`}
                   checked={rule.active}
                   onChange={() => toggleRule(rule)}
                 />
@@ -228,17 +225,7 @@ export default function Admin() {
 
           <form onSubmit={addRule} className="grid gap-3 rounded-b-2xl border-t border-black/5 bg-mint/60 p-5 sm:grid-cols-2">
             <TextField label="Rule name" value={ruleName} onChange={setRuleName} placeholder="Buy 3 save 10%" />
-            <SelectField label="Rule item" value={ruleItem} onChange={setRuleItem}>
-              <option value="">Whole order</option>
-              {items.map((item) => (
-                <option key={item.code} value={item.code}>
-                  {item.name}
-                </option>
-              ))}
-            </SelectField>
-            {ruleItem && (
-              <TextField label="Group size" value={groupSize} onChange={setGroupSize} placeholder="2" suffix="sets" inputMode="numeric" mono />
-            )}
+            <BundleEditor items={items} rows={bundleRows} onChange={setBundleRows} />
             <TextField label="Percent" value={percent} onChange={setPercent} placeholder="5" suffix="%" inputMode="numeric" mono />
             <label className="flex cursor-pointer items-center gap-2 self-end rounded-lg px-1 py-2 text-sm font-medium text-ink/75">
               <input
@@ -261,13 +248,75 @@ export default function Admin() {
   )
 }
 
+type BundleRow = { itemCode: string; qty: string }
+
+// describeBundle reads a bundle back as "2 × Green set + 1 × Red set".
+function describeBundle(bundle: { itemCode: string; qty: number | string }[], itemName: (code: string) => string): string {
+  return bundle.map((c) => `${c.qty} × ${itemName(c.itemCode)}`).join(' + ')
+}
+
 // describeRule turns the half-filled rule form into a plain sentence, so an
 // admin can read back the promotion before saving it.
-function describeRule(item: string, groupSize: string, percent: string, memberOnly: boolean): string {
+function describeRule(rows: BundleRow[], itemName: (code: string) => string, percent: string, memberOnly: boolean): string {
   const pct = percent || '…'
   const who = memberOnly ? ' for members' : ''
-  if (!item) return `${pct}% off the whole order${who}.`
-  return `Every ${groupSize || '…'} × ${item} get ${pct}% off${who}; leftovers pay full price.`
+  if (rows.length === 0) return `${pct}% off the whole order${who}.`
+  const bundle = describeBundle(
+    rows.map((row) => ({ itemCode: row.itemCode, qty: row.qty || '…' })),
+    (code) => (code ? itemName(code) : '…'),
+  )
+  return `Every bundle of ${bundle} gets ${pct}% off${who}; sets outside a complete bundle pay full price.`
+}
+
+// BundleEditor edits the rows of a bundle; no rows means a whole-order rule.
+function BundleEditor({ items, rows, onChange }: { items: AdminItem[]; rows: BundleRow[]; onChange: (rows: BundleRow[]) => void }) {
+  const setRow = (i: number, patch: Partial<BundleRow>) =>
+    onChange(rows.map((row, j) => (j === i ? { ...row, ...patch } : row)))
+  return (
+    <div className="flex flex-col gap-2 sm:col-span-2">
+      <p className="text-xs font-medium text-ink/70">Bundle items {rows.length === 0 && <span className="font-normal text-ink/45">(none: applies to the whole order)</span>}</p>
+      {rows.map((row, i) => (
+        <div key={i} className="grid grid-cols-[1fr_6rem_auto] items-center gap-2">
+          <select
+            aria-label={`Bundle item ${i + 1}`}
+            value={row.itemCode}
+            onChange={(e) => setRow(i, { itemCode: e.target.value })}
+            className={fieldClass}
+          >
+            <option value="">Choose item</option>
+            {items.map((item) => (
+              <option key={item.code} value={item.code}>
+                {item.name}
+              </option>
+            ))}
+          </select>
+          <input
+            aria-label={`Bundle quantity ${i + 1}`}
+            value={row.qty}
+            onChange={(e) => setRow(i, { qty: e.target.value })}
+            placeholder="2"
+            inputMode="numeric"
+            className={`${fieldClass} font-mono`}
+          />
+          <button
+            type="button"
+            aria-label={`Remove bundle item ${i + 1}`}
+            onClick={() => onChange(rows.filter((_, j) => j !== i))}
+            className="rounded-lg px-2 py-2 text-ink/40 transition hover:bg-black/5 hover:text-ink"
+          >
+            ×
+          </button>
+        </div>
+      ))}
+      <button
+        type="button"
+        onClick={() => onChange([...rows, { itemCode: '', qty: '' }])}
+        className="self-start rounded-lg px-2 py-1.5 text-sm font-medium text-fk-700 transition hover:bg-fk-50"
+      >
+        <span aria-hidden>+ </span>Add item to bundle
+      </button>
+    </div>
+  )
 }
 
 function Panel({ title, subtitle, delay, children }: { title: string; subtitle: string; delay: number; children: ReactNode }) {
@@ -404,22 +453,6 @@ function ColorField({ label, value, onChange }: { label: string; value: string; 
           </div>
         </>
       )}
-    </div>
-  )
-}
-
-type SelectFieldProps = { label: string; value: string; onChange: (value: string) => void; children: ReactNode }
-
-function SelectField({ label, value, onChange, children }: SelectFieldProps) {
-  const id = useId()
-  return (
-    <div className="flex flex-col gap-1">
-      <label htmlFor={id} className="text-xs font-medium text-ink/70">
-        {label}
-      </label>
-      <select id={id} value={value} onChange={(e) => onChange(e.target.value)} className={fieldClass}>
-        {children}
-      </select>
     </div>
   )
 }
