@@ -99,4 +99,11 @@ describe('Admin', () => {
 
     expect(await screen.findByRole('alert')).toHaveTextContent('duplicate item code: RED')
   })
+
+  it('shows an error when the lists cannot be loaded', async () => {
+    vi.mocked(api.fetchAdminMenu).mockRejectedValue(new Error('backend is down'))
+    render(<Admin />)
+
+    expect(await screen.findByRole('alert')).toHaveTextContent('backend is down')
+  })
 })

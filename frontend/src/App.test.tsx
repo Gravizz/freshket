@@ -37,4 +37,22 @@ describe('App', () => {
     expect(await screen.findByText('฿45.00')).toBeInTheDocument()
     expect(screen.getByText('Member 10%')).toBeInTheDocument()
   })
+
+  it('lists two discounts that share a label without a duplicate-key warning', async () => {
+    const errors = vi.spyOn(console, 'error').mockImplementation(() => {})
+    vi.mocked(api.calculate).mockResolvedValue({
+      subtotal: 10000,
+      discounts: [
+        { label: 'Welcome 5%', amount: 100 },
+        { label: 'Welcome 5%', amount: 200 },
+      ],
+      total: 9700,
+    })
+    render(<App />)
+
+    expect(await screen.findByText('−฿1.00')).toBeInTheDocument()
+    expect(screen.getByText('−฿2.00')).toBeInTheDocument()
+    expect(errors.mock.calls.flat().join(' ')).not.toContain('same key')
+    errors.mockRestore()
+  })
 })

@@ -88,8 +88,8 @@ export default function App() {
             <dt>Subtotal</dt>
             <dd className="tabular-nums">{formatTHB(breakdown.subtotal)}</dd>
           </div>
-          {breakdown.discounts.map((d) => (
-            <div key={d.label} className="flex justify-between text-emerald-700">
+          {breakdown.discounts.map((d, i) => (
+            <div key={i} className="flex justify-between text-emerald-700">
               <dt>{d.label}</dt>
               <dd className="tabular-nums">−{formatTHB(d.amount)}</dd>
             </div>

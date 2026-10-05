@@ -25,8 +25,12 @@ export default function Admin() {
   const [error, setError] = useState<string | null>(null)
 
   useEffect(() => {
-    fetchAdminMenu().then(setItems)
-    fetchRules().then(setRules)
+    Promise.all([fetchAdminMenu(), fetchRules()])
+      .then(([menuItems, discountRules]) => {
+        setItems(menuItems)
+        setRules(discountRules)
+      })
+      .catch((err: Error) => setError(err.message))
   }, [])
 
   const addRule = async (e: FormEvent) => {
