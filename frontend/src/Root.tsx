@@ -11,5 +11,19 @@ export default function Root() {
     return () => window.removeEventListener('hashchange', onChange)
   }, [])
 
-  return hash === '#/admin' ? <Admin /> : <App />
+  const isAdmin = hash === '#/admin'
+
+  return (
+    <>
+      <header className="flex justify-end px-4 pt-4">
+        <a
+          href={isAdmin ? '#/' : '#/admin'}
+          className="rounded-md border border-slate-300 px-3 py-1 text-sm text-slate-700 hover:bg-slate-100"
+        >
+          {isAdmin ? 'Store' : 'Admin'}
+        </a>
+      </header>
+      {isAdmin ? <Admin /> : <App />}
+    </>
+  )
 }
