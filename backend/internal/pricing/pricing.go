@@ -2,7 +2,10 @@
 // It is pure domain logic: no I/O, no HTTP, no database.
 package pricing
 
-import "errors"
+import (
+	"errors"
+	"fmt"
+)
 
 // Money is an amount in satang (1 THB = 100 satang).
 type Money int64
@@ -59,8 +62,6 @@ var (
 	ErrUnknownItem = errors.New("unknown item")
 	// ErrInvalidQuantity is returned when an order line has a negative quantity.
 	ErrInvalidQuantity = errors.New("invalid quantity")
-
-	errNotImplemented = errors.New("pricing: not implemented")
 )
 
 // Calculator applies its discounts, in order, to an order's subtotal.
@@ -73,15 +74,63 @@ func NewCalculator(discounts ...Discount) *Calculator {
 	return &Calculator{discounts: discounts}
 }
 
-// DefaultDiscounts returns the store's promotions in the order they apply:
-// 5% off each same-item pair of Orange, Pink or Green, then 10% member discount.
-func DefaultDiscounts() []Discount {
-	// TODO: PairDiscount, MemberDiscount
-	return nil
-}
+// MaxQuantity is the most sets of a single item one order may contain.
+const MaxQuantity = 10_000
 
 // Calculate prices the order against the menu.
 func (c *Calculator) Calculate(menu Menu, order Order) (Breakdown, error) {
-	// TODO: resolve lines, subtotal, apply c.discounts with half-up rounding
-	return Breakdown{}, errNotImplemented
+	lines, err := resolve(menu, order.Lines)
+	if err != nil {
+		return Breakdown{}, err
+	}
+	b := Breakdown{Discounts: []AppliedDiscount{}}
+	for _, l := range lines {
+		b.Subtotal += l.Item.Price * Money(l.Qty)
+	}
+	b.Total = b.Subtotal
+	for _, d := range c.discounts {
+		applied, ok := d.Apply(lines, order.Member, b.Total)
+		if !ok {
+			continue
+		}
+		b.Discounts = append(b.Discounts, applied)
+		b.Total -= applied.Amount
+	}
+	return b, nil
+}
+
+// resolve validates the lines against the menu and merges lines with the same
+// code, keeping the order of first appearance. Zero-quantity codes are dropped.
+func resolve(menu Menu, lines []Line) ([]PricedLine, error) {
+	var out []PricedLine
+	index := map[string]int{}
+	for _, l := range lines {
+		if l.Qty < 0 {
+			return nil, fmt.Errorf("%w: %d for %q", ErrInvalidQuantity, l.Qty, l.Code)
+		}
+		item, ok := menu[l.Code]
+		if !ok {
+			return nil, fmt.Errorf("%w: %q", ErrUnknownItem, l.Code)
+		}
+		if l.Qty > MaxQuantity {
+			return nil, fmt.Errorf("%w: %d for %q exceeds %d", ErrInvalidQuantity, l.Qty, l.Code, MaxQuantity)
+		}
+		i, seen := index[l.Code]
+		if !seen {
+			index[l.Code] = len(out)
+			out = append(out, PricedLine{Item: item})
+			i = len(out) - 1
+		}
+		out[i].Qty += l.Qty
+		if out[i].Qty > MaxQuantity {
+			return nil, fmt.Errorf("%w: %d for %q exceeds %d", ErrInvalidQuantity, out[i].Qty, l.Code, MaxQuantity)
+		}
+	}
+	kept := out[:0]
+	for _, l := range out {
+		if l.Qty > 0 {
+			kept = append(kept, l)
+		}
+	}
+	return kept, nil
 }

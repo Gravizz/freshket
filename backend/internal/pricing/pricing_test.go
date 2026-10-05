@@ -73,3 +73,49 @@ func TestCalculateRejectsInvalidLines(t *testing.T) {
 		})
 	}
 }
+
+func TestCalculateSubtotal(t *testing.T) {
+	calc := pricing.NewCalculator() // no rules: subtotal only
+
+	got, err := calc.Calculate(testMenu(), pricing.Order{Lines: []pricing.Line{{Code: "RED", Qty: 1}, {Code: "GREEN", Qty: 1}}})
+	if err != nil {
+		t.Fatalf("Calculate() error = %v", err)
+	}
+	if got.Subtotal != 9000 || got.Total != 9000 {
+		t.Errorf("Subtotal, Total = %d, %d, want 9000, 9000", got.Subtotal, got.Total)
+	}
+	if got.Discounts == nil || len(got.Discounts) != 0 {
+		t.Errorf("Discounts = %#v, want non-nil empty slice", got.Discounts)
+	}
+}
+
+func TestCalculateQuantityLimit(t *testing.T) {
+	tests := []struct {
+		name  string
+		lines []pricing.Line
+	}{
+		{"single line over the limit", []pricing.Line{{Code: "RED", Qty: pricing.MaxQuantity + 1}}},
+		{"duplicate lines add up over the limit", []pricing.Line{{Code: "RED", Qty: 6000}, {Code: "RED", Qty: 6000}}},
+		{"absurd quantity", []pricing.Line{{Code: "RED", Qty: 9_000_000_000_000}}},
+	}
+
+	calc := pricing.NewCalculator()
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, err := calc.Calculate(testMenu(), pricing.Order{Lines: tt.lines})
+			if !errors.Is(err, pricing.ErrInvalidQuantity) {
+				t.Errorf("error = %v, want %v", err, pricing.ErrInvalidQuantity)
+			}
+		})
+	}
+}
+
+func TestCalculateIgnoresZeroQuantity(t *testing.T) {
+	got, err := pricing.NewCalculator().Calculate(testMenu(), pricing.Order{Lines: []pricing.Line{{Code: "RED", Qty: 0}}})
+	if err != nil {
+		t.Fatalf("Calculate() error = %v", err)
+	}
+	if got.Subtotal != 0 || got.Total != 0 {
+		t.Errorf("Subtotal, Total = %d, %d, want 0, 0", got.Subtotal, got.Total)
+	}
+}
