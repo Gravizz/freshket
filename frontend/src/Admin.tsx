@@ -1,4 +1,4 @@
-import { useEffect, useId, useState, type FormEvent, type ReactNode } from 'react'
+import { useEffect, useId, useMemo, useRef, useState, type FormEvent, type ReactNode } from 'react'
 import {
   createItem,
   createRule,
@@ -10,12 +10,21 @@ import {
   type AdminItem,
   type Rule,
 } from './api'
-import { codeFromColor, displayCode, honeycomb, itemColor } from './itemColor'
+import { codeFromColor, displayCode, firstFreeColor, honeycomb, itemColor } from './itemColor'
 import Plate from './Plate'
+import {
+  MAX_NAME,
+  MAX_QUANTITY,
+  validateItem,
+  validateRule,
+  type ItemErrors,
+  type RuleErrors,
+  type RowErrors,
+} from './validation'
 
 export default function Admin() {
   const [items, setItems] = useState<AdminItem[]>([])
-  const [color, setColor] = useState(defaultColor)
+  const [chosenColor, setChosenColor] = useState<string | null>(null)
   const [name, setName] = useState('')
   const [price, setPrice] = useState('')
   const [rules, setRules] = useState<Rule[]>([])
@@ -25,6 +34,13 @@ export default function Admin() {
   const [memberOnly, setMemberOnly] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [notice, setNotice] = useState<string | null>(null)
+  // busy blocks a second write while one is in flight (a double click would
+  // otherwise add the same rule twice); the ref also covers clicks in the same tick.
+  const [busy, setBusy] = useState(false)
+  const writing = useRef(false)
+  // Field errors appear once a form has been submitted, then follow every edit.
+  const [itemTried, setItemTried] = useState(false)
+  const [ruleTried, setRuleTried] = useState(false)
 
   useEffect(() => {
     Promise.all([fetchAdminMenu(), fetchRules()])
@@ -43,47 +59,55 @@ export default function Admin() {
 
   // run clears the banners, performs one admin write, and surfaces its outcome.
   const run = async (action: () => Promise<string>) => {
+    if (writing.current) return
+    writing.current = true
+    setBusy(true)
     setError(null)
     setNotice(null)
     try {
       setNotice(await action())
     } catch (err) {
       setError((err as Error).message)
+    } finally {
+      writing.current = false
+      setBusy(false)
     }
   }
 
+  const takenCodes = useMemo(() => new Set(items.map((it) => it.code)), [items])
+  const color = chosenColor ?? firstFreeColor(takenCodes)
+  const itemCheck = validateItem({ code: color && codeFromColor(color), name, price }, takenCodes)
+  const ruleCheck = validateRule({ name: ruleName, rows: bundleRows, percent, memberOnly })
+  const itemErrors: ItemErrors = itemCheck.ok ? {} : itemTried ? itemCheck.errors : { code: itemCheck.errors.code }
+  const ruleErrors: RuleErrors | undefined = !ruleCheck.ok && ruleTried ? ruleCheck.errors : undefined
+
   const addRule = (e: FormEvent) => {
     e.preventDefault()
+    setRuleTried(true)
+    if (!ruleCheck.ok) return
     return run(async () => {
-      const created = await createRule({
-        name: ruleName,
-        bundle: bundleRows.map((row) => ({ itemCode: row.itemCode, qty: parseInt(row.qty, 10) })),
-        percent: parseInt(percent, 10),
-        memberOnly,
-        active: true,
-      })
+      const created = await createRule(ruleCheck.value)
       setRules((list) => [...list, created])
       setRuleName('')
       setBundleRows([])
       setPercent('')
       setMemberOnly(false)
+      setRuleTried(false)
       return `Rule “${created.name}” is live`
     })
   }
 
   const addItem = (e: FormEvent) => {
     e.preventDefault()
+    setItemTried(true)
+    if (!itemCheck.ok) return
     return run(async () => {
-      const created = await createItem({
-        code: codeFromColor(color),
-        name,
-        price: Math.round(parseFloat(price) * 100),
-        active: true,
-      })
+      const created = await createItem(itemCheck.value)
       setItems((list) => [...list, created])
-      setColor(defaultColor)
+      setChosenColor(null)
       setName('')
       setPrice('')
+      setItemTried(false)
       return `“${created.name}” added to the menu`
     })
   }
@@ -176,16 +200,16 @@ export default function Admin() {
                   <p className="font-mono text-[11px] tracking-wider text-ink/45">{displayCode(item.code)}</p>
                 </div>
                 <span className="font-mono text-sm tabular-nums">{formatTHB(item.price)}</span>
-                <Switch label={`${item.name} active`} checked={item.active} onChange={() => toggleItem(item)} />
+                <Switch label={`${item.name} active`} checked={item.active} disabled={busy} onChange={() => toggleItem(item)} />
               </li>
             ))}
           </ul>
 
-          <form onSubmit={addItem} className="grid gap-3 rounded-b-2xl border-t border-black/5 bg-mint/60 p-5 sm:grid-cols-[1fr_1.4fr_1fr]">
-            <ColorField label="Item code" value={color} onChange={setColor} />
-            <TextField label="Item name" value={name} onChange={setName} placeholder="Black set" />
-            <TextField label="Price (THB)" value={price} onChange={setPrice} placeholder="45.00" prefix="฿" inputMode="decimal" mono />
-            <SubmitButton className="sm:col-span-3">Add item</SubmitButton>
+          <form noValidate autoComplete="off" onSubmit={addItem} className="grid gap-3 rounded-b-2xl border-t border-black/5 bg-mint/60 p-5 sm:grid-cols-[1fr_1.4fr_1fr]">
+            <ColorField label="Item code" value={color ?? ''} taken={takenCodes} error={itemErrors.code} onChange={setChosenColor} />
+            <TextField label="Item name" value={name} onChange={setName} placeholder="Black set" maxLength={MAX_NAME} error={itemErrors.name} />
+            <TextField label="Price (THB)" value={price} onChange={setPrice} placeholder="45.00" prefix="฿" inputMode="decimal" maxLength={12} mono error={itemErrors.price} />
+            <SubmitButton busy={busy} className="sm:col-span-3">Add item</SubmitButton>
           </form>
         </Panel>
 
@@ -217,16 +241,17 @@ export default function Admin() {
                 <Switch
                   label={`${rule.name} active`}
                   checked={rule.active}
+                  disabled={busy}
                   onChange={() => toggleRule(rule)}
                 />
               </li>
             ))}
           </ul>
 
-          <form onSubmit={addRule} className="grid gap-3 rounded-b-2xl border-t border-black/5 bg-mint/60 p-5 sm:grid-cols-2">
-            <TextField label="Rule name" value={ruleName} onChange={setRuleName} placeholder="Buy 3 save 10%" />
-            <BundleEditor items={items} rows={bundleRows} onChange={setBundleRows} />
-            <TextField label="Percent" value={percent} onChange={setPercent} placeholder="5" suffix="%" inputMode="numeric" mono />
+          <form noValidate autoComplete="off" onSubmit={addRule} className="grid gap-3 rounded-b-2xl border-t border-black/5 bg-mint/60 p-5 sm:grid-cols-2">
+            <TextField label="Rule name" value={ruleName} onChange={setRuleName} placeholder="Buy 3 save 10%" maxLength={MAX_NAME} error={ruleErrors?.name} />
+            <BundleEditor items={items} rows={bundleRows} errors={ruleErrors?.rows} onChange={setBundleRows} />
+            <TextField label="Percent" value={percent} onChange={setPercent} placeholder="5" suffix="%" inputMode="numeric" maxLength={3} mono error={ruleErrors?.percent} />
             <label className="flex cursor-pointer items-center gap-2 self-end rounded-lg px-1 py-2 text-sm font-medium text-ink/75">
               <input
                 type="checkbox"
@@ -240,7 +265,7 @@ export default function Admin() {
               <span className="font-medium text-fk-700">Preview · </span>
               {preview}
             </p>
-            <SubmitButton className="sm:col-span-2">Add rule</SubmitButton>
+            <SubmitButton busy={busy} className="sm:col-span-2">Add rule</SubmitButton>
           </form>
         </Panel>
       </div>
@@ -269,45 +294,72 @@ function describeRule(rows: BundleRow[], itemName: (code: string) => string, per
 }
 
 // BundleEditor edits the rows of a bundle; no rows means a whole-order rule.
-function BundleEditor({ items, rows, onChange }: { items: AdminItem[]; rows: BundleRow[]; onChange: (rows: BundleRow[]) => void }) {
+function BundleEditor({
+  items,
+  rows,
+  errors = [],
+  onChange,
+}: {
+  items: AdminItem[]
+  rows: BundleRow[]
+  errors?: RowErrors[]
+  onChange: (rows: BundleRow[]) => void
+}) {
   const setRow = (i: number, patch: Partial<BundleRow>) =>
     onChange(rows.map((row, j) => (j === i ? { ...row, ...patch } : row)))
   return (
     <div className="flex flex-col gap-2 sm:col-span-2">
       <p className="text-xs font-medium text-ink/70">Bundle items {rows.length === 0 && <span className="font-normal text-ink/45">(none: applies to the whole order)</span>}</p>
-      {rows.map((row, i) => (
-        <div key={i} className="grid grid-cols-[1fr_6rem_auto] items-center gap-2">
-          <select
-            aria-label={`Bundle item ${i + 1}`}
-            value={row.itemCode}
-            onChange={(e) => setRow(i, { itemCode: e.target.value })}
-            className={fieldClass}
-          >
-            <option value="">Choose item</option>
-            {items.map((item) => (
-              <option key={item.code} value={item.code}>
-                {item.name}
-              </option>
-            ))}
-          </select>
-          <input
-            aria-label={`Bundle quantity ${i + 1}`}
-            value={row.qty}
-            onChange={(e) => setRow(i, { qty: e.target.value })}
-            placeholder="2"
-            inputMode="numeric"
-            className={`${fieldClass} font-mono`}
-          />
-          <button
-            type="button"
-            aria-label={`Remove bundle item ${i + 1}`}
-            onClick={() => onChange(rows.filter((_, j) => j !== i))}
-            className="rounded-lg px-2 py-2 text-ink/40 transition hover:bg-black/5 hover:text-ink"
-          >
-            ×
-          </button>
-        </div>
-      ))}
+      {rows.map((row, i) => {
+        const itemError = errors[i]?.item
+        const qtyError = errors[i]?.qty
+        return (
+          <div key={i} className="grid grid-cols-[1fr_6rem_auto] items-start gap-2">
+            <div className="flex flex-col gap-1">
+              <select
+                aria-label={`Bundle item ${i + 1}`}
+                aria-invalid={itemError ? true : undefined}
+                value={row.itemCode}
+                onChange={(e) => setRow(i, { itemCode: e.target.value })}
+                className={`${fieldClass} ${itemError ? invalidClass : ''}`}
+              >
+                <option value="">Choose item</option>
+                {items.map((item) => (
+                  <option
+                    key={item.code}
+                    value={item.code}
+                    disabled={rows.some((other, j) => j !== i && other.itemCode === item.code)}
+                  >
+                    {item.active ? item.name : `${item.name} (off the menu)`}
+                  </option>
+                ))}
+              </select>
+              <FieldError>{itemError}</FieldError>
+            </div>
+            <div className="flex flex-col gap-1">
+              <input
+                aria-label={`Bundle quantity ${i + 1}`}
+                aria-invalid={qtyError ? true : undefined}
+                value={row.qty}
+                onChange={(e) => setRow(i, { qty: e.target.value })}
+                placeholder="2"
+                inputMode="numeric"
+                maxLength={String(MAX_QUANTITY).length}
+                className={`${fieldClass} font-mono ${qtyError ? invalidClass : ''}`}
+              />
+              <FieldError>{qtyError}</FieldError>
+            </div>
+            <button
+              type="button"
+              aria-label={`Remove bundle item ${i + 1}`}
+              onClick={() => onChange(rows.filter((_, j) => j !== i))}
+              className="rounded-lg px-2 py-2 text-ink/40 transition hover:bg-black/5 hover:text-ink"
+            >
+              ×
+            </button>
+          </div>
+        )
+      })}
       <button
         type="button"
         onClick={() => onChange([...rows, { itemCode: '', qty: '' }])}
@@ -343,10 +395,20 @@ function Stat({ label, value }: { label: string; value: number }) {
   )
 }
 
-const defaultColor = '#00CE7C'
-
 const fieldClass =
   'w-full rounded-lg border border-black/10 bg-white px-3 py-2 text-sm shadow-xs transition placeholder:text-ink/30 focus:border-fk-400 focus:ring-3 focus:ring-fk-400/20 focus:outline-none'
+
+const invalidClass = 'border-red-400 focus:border-red-500 focus:ring-red-400/20'
+
+// FieldError shows the message under a field; it renders nothing without one.
+function FieldError({ id, children }: { id?: string; children?: string }) {
+  if (!children) return null
+  return (
+    <p id={id} role="alert" className="text-xs text-red-700">
+      {children}
+    </p>
+  )
+}
 
 type TextFieldProps = {
   label: string
@@ -356,11 +418,14 @@ type TextFieldProps = {
   prefix?: string
   suffix?: string
   inputMode?: 'decimal' | 'numeric'
+  maxLength?: number
   mono?: boolean
+  error?: string
 }
 
-function TextField({ label, value, onChange, placeholder, prefix, suffix, inputMode, mono }: TextFieldProps) {
+function TextField({ label, value, onChange, placeholder, prefix, suffix, inputMode, maxLength, mono, error }: TextFieldProps) {
   const id = useId()
+  const errorId = `${id}-error`
   return (
     <div className="flex flex-col gap-1">
       <label htmlFor={id} className="text-xs font-medium text-ink/70">
@@ -374,10 +439,14 @@ function TextField({ label, value, onChange, placeholder, prefix, suffix, inputM
           onChange={(e) => onChange(e.target.value)}
           placeholder={placeholder}
           inputMode={inputMode}
-          className={`${fieldClass} ${mono ? 'font-mono' : ''} ${prefix ? 'pl-7' : ''} ${suffix ? 'pr-12' : ''}`}
+          maxLength={maxLength}
+          aria-invalid={error ? true : undefined}
+          aria-describedby={error ? errorId : undefined}
+          className={`${fieldClass} ${mono ? 'font-mono' : ''} ${prefix ? 'pl-7' : ''} ${suffix ? 'pr-12' : ''} ${error ? invalidClass : ''}`}
         />
         {suffix && <Adornment side="right">{suffix}</Adornment>}
       </div>
+      <FieldError id={errorId}>{error}</FieldError>
     </div>
   )
 }
@@ -397,8 +466,21 @@ function Adornment({ side, children }: { side: 'left' | 'right'; children: strin
 
 // ColorField picks an item's colour from the honeycomb tray; its hex digits
 // become the item code.
-function ColorField({ label, value, onChange }: { label: string; value: string; onChange: (value: string) => void }) {
+function ColorField({
+  label,
+  value,
+  taken,
+  error,
+  onChange,
+}: {
+  label: string
+  value: string
+  taken: ReadonlySet<string>
+  error?: string
+  onChange: (value: string) => void
+}) {
   const id = useId()
+  const errorId = `${id}-error`
   const [open, setOpen] = useState(false)
   const pick = (color: string) => {
     onChange(color)
@@ -413,14 +495,17 @@ function ColorField({ label, value, onChange }: { label: string; value: string; 
         id={id}
         type="button"
         aria-expanded={open}
+        aria-invalid={error ? true : undefined}
+        aria-describedby={error ? errorId : undefined}
         onClick={() => setOpen((o) => !o)}
         onKeyDown={(e) => e.key === 'Escape' && setOpen(false)}
-        className={`${fieldClass} flex items-center gap-2 py-1.5 text-left`}
+        className={`${fieldClass} flex items-center gap-2 py-1.5 text-left ${error ? invalidClass : ''}`}
       >
         <span className="size-6 shrink-0 rounded-md ring-1 ring-black/10" style={{ background: value }} />
-        <span className="flex-1 font-mono">{displayCode(codeFromColor(value))}</span>
+        <span className="flex-1 font-mono">{value ? displayCode(codeFromColor(value)) : 'None free'}</span>
         <span aria-hidden className="text-ink/35">▾</span>
       </button>
+      <FieldError id={errorId}>{error}</FieldError>
 
       {open && (
         <>
@@ -433,21 +518,25 @@ function ColorField({ label, value, onChange }: { label: string; value: string; 
           >
             {honeycomb.map((row, i) => (
               <div key={i} className="-mt-[5px] flex justify-center gap-[3px] first:mt-0">
-                {row.map((color) => (
-                  <button
-                    key={color}
-                    type="button"
-                    role="radio"
-                    aria-checked={color === value.toUpperCase()}
-                    aria-label={color}
-                    title={color}
-                    onClick={() => pick(color)}
-                    className={`h-[27px] w-6 transition [clip-path:polygon(50%_0,100%_25%,100%_75%,50%_100%,0_75%,0_25%)] hover:scale-125 focus-visible:scale-125 focus-visible:outline-none ${
-                      color === value.toUpperCase() ? 'scale-125' : ''
-                    }`}
-                    style={{ background: color }}
-                  />
-                ))}
+                {row.map((color) => {
+                  const used = taken.has(codeFromColor(color))
+                  return (
+                    <button
+                      key={color}
+                      type="button"
+                      role="radio"
+                      aria-checked={color === value.toUpperCase()}
+                      aria-label={color}
+                      title={used ? `${color} (in use)` : color}
+                      disabled={used}
+                      onClick={() => pick(color)}
+                      className={`h-[27px] w-6 transition [clip-path:polygon(50%_0,100%_25%,100%_75%,50%_100%,0_75%,0_25%)] focus-visible:outline-none enabled:hover:scale-125 enabled:focus-visible:scale-125 disabled:cursor-not-allowed disabled:opacity-20 ${
+                        color === value.toUpperCase() ? 'scale-125' : ''
+                      }`}
+                      style={{ background: color }}
+                    />
+                  )
+                })}
               </div>
             ))}
           </div>
@@ -457,26 +546,28 @@ function ColorField({ label, value, onChange }: { label: string; value: string; 
   )
 }
 
-function SubmitButton({ children, className = '' }: { children: string; className?: string }) {
+function SubmitButton({ children, busy, className = '' }: { children: string; busy: boolean; className?: string }) {
   return (
     <button
       type="submit"
-      className={`rounded-lg bg-fk-600 px-4 py-2.5 text-sm font-medium text-white shadow-sm transition hover:bg-fk-700 focus-visible:ring-2 focus-visible:ring-fk-400 focus-visible:ring-offset-2 focus-visible:outline-none active:scale-[0.99] ${className}`}
+      disabled={busy}
+      className={`rounded-lg bg-fk-600 px-4 py-2.5 text-sm font-medium text-white shadow-sm transition hover:bg-fk-700 focus-visible:ring-2 focus-visible:ring-fk-400 focus-visible:ring-offset-2 focus-visible:outline-none active:scale-[0.99] disabled:cursor-wait disabled:opacity-60 ${className}`}
     >
-      {children}
+      {busy ? 'Saving…' : children}
     </button>
   )
 }
 
-function Switch({ label, checked, onChange }: { label: string; checked: boolean; onChange: () => void }) {
+function Switch({ label, checked, disabled, onChange }: { label: string; checked: boolean; disabled: boolean; onChange: () => void }) {
   return (
     <button
       type="button"
       role="switch"
       aria-checked={checked}
       aria-label={label}
+      disabled={disabled}
       onClick={onChange}
-      className={`relative h-6 w-11 shrink-0 rounded-full transition focus-visible:ring-2 focus-visible:ring-fk-400 focus-visible:ring-offset-2 focus-visible:outline-none ${
+      className={`relative h-6 w-11 shrink-0 rounded-full transition disabled:cursor-wait disabled:opacity-60 focus-visible:ring-2 focus-visible:ring-fk-400 focus-visible:ring-offset-2 focus-visible:outline-none ${
         checked ? 'bg-fk-500' : 'bg-ink/15'
       }`}
     >

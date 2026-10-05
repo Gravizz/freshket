@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { calculate, fetchMenu, formatTHB, type Breakdown, type MenuItem } from './api'
 import { displayCode } from './itemColor'
 import Plate from './Plate'
+import { MAX_QUANTITY } from './validation'
 
 export default function App() {
   const [menu, setMenu] = useState<MenuItem[] | null>(null)
@@ -9,12 +10,22 @@ export default function App() {
   const [member, setMember] = useState(false)
   const [breakdown, setBreakdown] = useState<Breakdown | null>(null)
   const [error, setError] = useState<string | null>(null)
+  const [menuError, setMenuError] = useState<string | null>(null)
+  const [notice, setNotice] = useState<string | null>(null)
 
-  useEffect(() => {
+  const loadMenu = () =>
     fetchMenu()
       .then(setMenu)
-      .catch((e: Error) => setError(e.message))
+      .catch((e: Error) => setMenuError(e.message))
+
+  useEffect(() => {
+    loadMenu()
   }, [])
+
+  const retryMenu = () => {
+    setMenuError(null)
+    loadMenu()
+  }
 
   useEffect(() => {
     let ignore = false
@@ -30,15 +41,34 @@ export default function App() {
         }
       })
       .catch((e: Error) => {
-        if (!ignore) setError(e.message)
+        if (ignore) return
+        // A stale total beside an error would mislead, so show only the error.
+        setBreakdown(null)
+        setError(e.message)
+        // The menu may have changed under the basket (an item was taken off):
+        // resync it and drop the sets that can no longer be ordered.
+        fetchMenu()
+          .then((fresh) => {
+            if (ignore) return
+            const known = new Set(fresh.map((item) => item.code))
+            setMenu(fresh)
+            const kept = Object.entries(quantities).filter(([code]) => known.has(code))
+            if (kept.length < Object.keys(quantities).length) {
+              setNotice('Some sets are no longer on the menu and were removed from your basket.')
+              setQuantities(Object.fromEntries(kept))
+            }
+          })
+          .catch(() => {})
       })
     return () => {
       ignore = true
     }
   }, [quantities, member])
 
-  const setQty = (code: string, qty: number) =>
-    setQuantities((q) => ({ ...q, [code]: Math.max(0, qty) }))
+  const setQty = (code: string, qty: number) => {
+    setNotice(null)
+    setQuantities((q) => ({ ...q, [code]: Math.min(MAX_QUANTITY, Math.max(0, qty)) }))
+  }
 
   const lines = (menu ?? [])
     .filter((item) => (quantities[item.code] ?? 0) > 0)
@@ -90,8 +120,26 @@ export default function App() {
             {menu && <span className="text-sm text-ink/50">{menu.length} sets available</span>}
           </div>
 
+          {menuError && (
+            <div role="alert" className="rounded-2xl bg-red-50 p-5 text-sm text-red-700 ring-1 ring-red-200">
+              <p>Could not load the menu: {menuError}</p>
+              <button
+                type="button"
+                onClick={retryMenu}
+                className="mt-3 rounded-full bg-white px-4 py-1.5 font-medium text-red-700 ring-1 ring-red-200 transition hover:bg-red-100"
+              >
+                Try again
+              </button>
+            </div>
+          )}
+          {menu?.length === 0 && (
+            <p className="rounded-2xl border border-dashed border-fk-200 bg-mint/60 p-6 text-center text-sm text-ink/60">
+              No sets are on the menu right now. Please check back soon.
+            </p>
+          )}
+
           <ul className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
-            {menu === null && !error
+            {menu === null && !menuError
               ? Array.from({ length: 6 }, (_, i) => (
                   <li key={i} className="h-44 animate-pulse rounded-2xl bg-white/60 ring-1 ring-black/5" />
                 ))
@@ -115,6 +163,11 @@ export default function App() {
               {error}
             </p>
           )}
+          {notice && (
+            <p role="status" className="rounded-xl bg-sun/20 px-4 py-3 text-sm text-amber-900 ring-1 ring-sun/40">
+              {notice}
+            </p>
+          )}
 
           <div id="order-summary" className="scroll-mt-24 drop-shadow-[0_18px_30px_rgb(0_77_61/0.12)]">
             <div className="receipt-tear rounded-t-2xl bg-white px-6 pt-6 pb-10">
@@ -123,7 +176,10 @@ export default function App() {
                 {lines.length > 0 && (
                   <button
                     type="button"
-                    onClick={() => setQuantities({})}
+                    onClick={() => {
+                      setNotice(null)
+                      setQuantities({})
+                    }}
                     className="rounded-md px-2 py-1 text-xs font-medium text-ink/50 transition hover:bg-mint hover:text-fk-700"
                   >
                     Clear
@@ -263,7 +319,7 @@ function MenuCard({ item, qty, onChange, delay }: MenuCardProps) {
               −
             </StepButton>
             <span className="font-mono font-semibold text-fk-900 tabular-nums">{qty}</span>
-            <StepButton label={`Add ${item.name}`} onClick={() => onChange(qty + 1)}>
+            <StepButton label={`Add ${item.name}`} disabled={qty >= MAX_QUANTITY} onClick={() => onChange(qty + 1)}>
               +
             </StepButton>
           </div>
@@ -282,13 +338,14 @@ function MenuCard({ item, qty, onChange, delay }: MenuCardProps) {
   )
 }
 
-function StepButton({ label, onClick, children }: { label: string; onClick: () => void; children: string }) {
+function StepButton({ label, disabled, onClick, children }: { label: string; disabled?: boolean; onClick: () => void; children: string }) {
   return (
     <button
       type="button"
       aria-label={label}
+      disabled={disabled}
       onClick={onClick}
-      className="grid size-8 place-items-center rounded-full bg-white text-lg leading-none text-fk-700 shadow-sm ring-1 ring-fk-200 transition hover:bg-fk-600 hover:text-white focus-visible:ring-2 focus-visible:ring-fk-400 focus-visible:outline-none active:scale-90"
+      className="grid size-8 place-items-center rounded-full bg-white text-lg leading-none text-fk-700 shadow-sm ring-1 ring-fk-200 transition enabled:hover:bg-fk-600 enabled:hover:text-white enabled:active:scale-90 disabled:cursor-not-allowed disabled:opacity-40 focus-visible:ring-2 focus-visible:ring-fk-400 focus-visible:outline-none"
     >
       {children}
     </button>

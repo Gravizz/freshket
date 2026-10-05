@@ -1,4 +1,4 @@
-import { render, screen } from '@testing-library/react'
+import { render, screen, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import Admin from './Admin'
@@ -109,10 +109,11 @@ describe('Admin', () => {
     expect(await screen.findByText('RED')).toBeInTheDocument()
 
     await user.type(screen.getByLabelText('Rule name'), 'bad')
-    await user.type(screen.getByLabelText('Percent'), '0')
+    await user.type(screen.getByLabelText('Percent'), '5')
     await user.click(screen.getByRole('button', { name: 'Add rule' }))
 
     expect(await screen.findByRole('alert')).toHaveTextContent('percent must be between 1 and 100')
+    expect(screen.getByLabelText('Rule name')).toHaveValue('bad') // the form keeps what was typed
   })
 
   it('adds a whole-order rule for members when no item is chosen', async () => {
@@ -180,5 +181,135 @@ describe('Admin', () => {
     render(<Admin />)
 
     expect(await screen.findByRole('alert')).toHaveTextContent('backend is down')
+  })
+
+  describe('form checks', () => {
+    const submitItem = async (user: ReturnType<typeof userEvent.setup>, fields: { name?: string; price?: string }) => {
+      expect(await screen.findByText('RED')).toBeInTheDocument()
+      if (fields.name) await user.type(screen.getByLabelText('Item name'), fields.name)
+      if (fields.price) await user.type(screen.getByLabelText('Price (THB)'), fields.price)
+      await user.click(screen.getByRole('button', { name: 'Add item' }))
+    }
+
+    it('shows no errors on an untouched form', async () => {
+      render(<Admin />)
+      expect(await screen.findByText('RED')).toBeInTheDocument()
+
+      expect(screen.queryByRole('alert')).not.toBeInTheDocument()
+    })
+
+    it('blocks an empty item form and says what is missing', async () => {
+      const user = userEvent.setup()
+      render(<Admin />)
+
+      await submitItem(user, {})
+
+      expect(api.createItem).not.toHaveBeenCalled()
+      expect(screen.getByText('Enter a name.')).toBeInTheDocument()
+      expect(screen.getByText('Enter a price.')).toBeInTheDocument()
+      expect(screen.getByLabelText('Item name')).toBeInvalid()
+    })
+
+    it.each(['12abc', '1e3', '-5', '0', '1.005', '1000000.01'])('blocks the price %j', async (price) => {
+      const user = userEvent.setup()
+      render(<Admin />)
+
+      await submitItem(user, { name: 'Black set', price })
+
+      expect(api.createItem).not.toHaveBeenCalled()
+      expect(screen.getByLabelText('Price (THB)')).toBeInvalid()
+    })
+
+    it('clears a field error as soon as the field is fixed', async () => {
+      const user = userEvent.setup()
+      render(<Admin />)
+      await submitItem(user, { name: 'Black set', price: 'abc' })
+      expect(screen.getByLabelText('Price (THB)')).toBeInvalid()
+
+      await user.clear(screen.getByLabelText('Price (THB)'))
+      await user.type(screen.getByLabelText('Price (THB)'), '45')
+
+      expect(screen.getByLabelText('Price (THB)')).toBeValid()
+    })
+
+    it('sends the item name without surrounding spaces', async () => {
+      const user = userEvent.setup()
+      vi.mocked(api.createItem).mockImplementation(async (item) => item)
+      render(<Admin />)
+
+      await submitItem(user, { name: '  Black set  ', price: '45' })
+
+      expect(api.createItem).toHaveBeenCalledWith(expect.objectContaining({ name: 'Black set', price: 4500 }))
+    })
+
+    it('offers the next free colour and disables colours already used as codes', async () => {
+      const user = userEvent.setup()
+      vi.mocked(api.fetchAdminMenu).mockResolvedValue([{ code: '00CE7C', name: 'Mint', price: 1000, active: true }])
+      render(<Admin />)
+      expect(await screen.findByText('Mint')).toBeInTheDocument()
+
+      expect(screen.getByLabelText('Item code')).not.toHaveTextContent('#00CE7C')
+      await user.click(screen.getByLabelText('Item code'))
+      expect(screen.getByRole('radio', { name: '#00CE7C' })).toBeDisabled()
+    })
+
+    it('blocks a rule with a bad percent, a missing item, a bad quantity and no name', async () => {
+      const user = userEvent.setup()
+      render(<Admin />)
+      expect(await screen.findByText('RED')).toBeInTheDocument()
+      await user.click(screen.getByRole('button', { name: 'Add item to bundle' }))
+      await user.type(screen.getByLabelText('Bundle quantity 1'), '2.5')
+      await user.type(screen.getByLabelText('Percent'), '5.5')
+      await user.click(screen.getByRole('button', { name: 'Add rule' }))
+
+      expect(api.createRule).not.toHaveBeenCalled()
+      expect(screen.getByLabelText('Rule name')).toBeInvalid()
+      expect(screen.getByLabelText('Bundle item 1')).toBeInvalid()
+      expect(screen.getByLabelText('Bundle quantity 1')).toBeInvalid()
+      expect(screen.getByLabelText('Percent')).toBeInvalid()
+    })
+
+    it('stops the same item being picked twice in one bundle', async () => {
+      const user = userEvent.setup()
+      render(<Admin />)
+      expect(await screen.findByText('RED')).toBeInTheDocument()
+      await user.click(screen.getByRole('button', { name: 'Add item to bundle' }))
+      await user.click(screen.getByRole('button', { name: 'Add item to bundle' }))
+      await user.selectOptions(screen.getByLabelText('Bundle item 1'), 'GREEN')
+
+      const second = screen.getByLabelText('Bundle item 2')
+      expect(within(second).getByRole('option', { name: 'Green set' })).toBeDisabled()
+      expect(within(second).getByRole('option', { name: 'Red set' })).toBeEnabled()
+    })
+
+    it('marks an item that is off the menu in the bundle picker', async () => {
+      const user = userEvent.setup()
+      vi.mocked(api.fetchAdminMenu).mockResolvedValue([{ code: 'RED', name: 'Red set', price: 5000, active: false }])
+      render(<Admin />)
+      expect(await screen.findByText('RED')).toBeInTheDocument()
+      await user.click(screen.getByRole('button', { name: 'Add item to bundle' }))
+
+      expect(screen.getByRole('option', { name: 'Red set (off the menu)' })).toBeInTheDocument()
+    })
+
+    it('saves once when the submit button is clicked twice', async () => {
+      const user = userEvent.setup()
+      let finish: (rule: api.Rule) => void = () => {}
+      vi.mocked(api.createRule).mockReturnValue(new Promise((resolve) => (finish = resolve)))
+      render(<Admin />)
+      expect(await screen.findByText('RED')).toBeInTheDocument()
+      await user.type(screen.getByLabelText('Rule name'), 'Lunch')
+      await user.type(screen.getByLabelText('Percent'), '5')
+
+      const submit = screen.getByRole('button', { name: 'Add rule' })
+      await user.dblClick(submit)
+
+      expect(api.createRule).toHaveBeenCalledTimes(1)
+      expect(screen.getAllByRole('button', { name: 'Saving…' })).toHaveLength(2)
+      expect(screen.getByRole('switch', { name: 'Red set active' })).toBeDisabled()
+      finish({ id: 9, name: 'Lunch', bundle: [], percent: 5, memberOnly: false, active: true })
+      expect(await screen.findByText('Lunch')).toBeInTheDocument()
+      expect(screen.getByRole('button', { name: 'Add rule' })).toBeEnabled()
+    })
   })
 })

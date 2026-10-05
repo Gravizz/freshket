@@ -34,6 +34,9 @@ export function displayCode(code: string): string {
   return hexCode.test(code) ? `#${code}` : code
 }
 
+// centerColor is Freshket green, the middle of the tray and the first colour offered.
+const centerColor = '#00CE7C'
+
 // honeycomb is the admin colour tray: a hexagon of hexagons, three rings
 // around Freshket green. Hue follows the angle around the centre and each
 // ring out is deeper, so 37 distinct colours fit in a small, familiar shape.
@@ -45,7 +48,7 @@ export const honeycomb: string[][] = (() => {
     for (let q = Math.max(-radius, -r - radius); q <= Math.min(radius, -r + radius); q++) {
       const ring = Math.max(Math.abs(q), Math.abs(r), Math.abs(q + r))
       if (ring === 0) {
-        row.push('#00CE7C')
+        row.push(centerColor)
         continue
       }
       const hue = (Math.atan2(r * Math.sqrt(3) / 2, q + r / 2) * 180) / Math.PI
@@ -55,6 +58,12 @@ export const honeycomb: string[][] = (() => {
   }
   return rows
 })()
+
+// firstFreeColor is the first tray colour whose code no item uses yet, or
+// undefined when all of them are taken.
+export function firstFreeColor(takenCodes: ReadonlySet<string>): string | undefined {
+  return [centerColor, ...honeycomb.flat()].find((color) => !takenCodes.has(codeFromColor(color)))
+}
 
 function hslToHex(h: number, s: number, l: number): string {
   const a = (s / 100) * Math.min(l / 100, 1 - l / 100)

@@ -20,12 +20,22 @@ export type Breakdown = {
 export type AdminItem = MenuItem & { active: boolean }
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
-  const res = await fetch(path, init)
-  if (!res.ok) {
-    const body = await res.text()
-    throw new Error(body || `Request failed: ${res.status}`)
+  let res: Response
+  try {
+    res = await fetch(path, init)
+  } catch {
+    throw new Error('Cannot reach the server. Check your connection and try again.')
   }
+  if (!res.ok) throw new Error(await errorMessage(res))
   return res.json() as Promise<T>
+}
+
+// errorMessage prefers the API's own plain-text message and falls back to the
+// status when the body is empty, or HTML from a proxy that cannot reach the API.
+async function errorMessage(res: Response): Promise<string> {
+  const body = (await res.text()).trim()
+  const readable = body !== '' && body.length <= 300 && !body.startsWith('<')
+  return readable ? body : `Request failed: ${res.status}`
 }
 
 export function fetchMenu(): Promise<MenuItem[]> {
