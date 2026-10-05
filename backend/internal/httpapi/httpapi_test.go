@@ -618,3 +618,45 @@ func TestAdminRuleUpdateWithoutBundleReturnsEmptyBundle(t *testing.T) {
 		t.Errorf("update = %d %s, want 200 with \"bundle\":[]", resp.StatusCode, raw)
 	}
 }
+
+func TestAdminTrimsSurroundingWhitespaceFromNames(t *testing.T) {
+	app := newTestApp(t)
+
+	resp, raw := adminRequest(t, app, http.MethodPost, "/api/admin/menu",
+		`{"code":"BLACK","name":"  Black set  ","price":4500,"active":true}`)
+	if resp.StatusCode != http.StatusCreated || !strings.Contains(raw, `"name":"Black set"`) {
+		t.Errorf("create item = %d %s, want 201 with a trimmed name", resp.StatusCode, raw)
+	}
+	resp, raw = adminRequest(t, app, http.MethodPut, "/api/admin/menu/BLACK",
+		`{"name":"\tBlack set 2 ","price":4500,"active":true}`)
+	if resp.StatusCode != http.StatusOK || !strings.Contains(raw, `"name":"Black set 2"`) {
+		t.Errorf("update item = %d %s, want 200 with a trimmed name", resp.StatusCode, raw)
+	}
+	_, raw = adminRequest(t, app, http.MethodGet, "/api/admin/menu", "")
+	if strings.Contains(raw, `"name":" `) || strings.Contains(raw, ` ","price"`) {
+		t.Errorf("admin menu = %s, want no stored padding", raw)
+	}
+
+	resp, raw = adminRequest(t, app, http.MethodPost, "/api/admin/rules",
+		`{"name":"  Lunch deal ","bundle":[],"percent":5,"memberOnly":false,"active":true}`)
+	if resp.StatusCode != http.StatusCreated || !strings.Contains(raw, `"name":"Lunch deal"`) {
+		t.Errorf("create rule = %d %s, want 201 with a trimmed name", resp.StatusCode, raw)
+	}
+	_, raw = adminRequest(t, app, http.MethodGet, "/api/admin/rules", "")
+	if strings.Contains(raw, `"name":"  Lunch`) || strings.Contains(raw, `deal "`) {
+		t.Errorf("admin rules = %s, want no stored padding", raw)
+	}
+}
+
+func TestAdminRejectsWhitespaceOnlyNames(t *testing.T) {
+	app := newTestApp(t)
+
+	resp, raw := adminRequest(t, app, http.MethodPost, "/api/admin/menu", `{"code":"BLANK","name":"   ","price":100,"active":true}`)
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Errorf("item = %d %s, want 400", resp.StatusCode, raw)
+	}
+	resp, raw = adminRequest(t, app, http.MethodPost, "/api/admin/rules", `{"name":"   ","bundle":[],"percent":5,"active":true}`)
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Errorf("rule = %d %s, want 400", resp.StatusCode, raw)
+	}
+}

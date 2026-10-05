@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"strconv"
+	"strings"
 
 	"github.com/gofiber/fiber/v3"
 
@@ -37,7 +38,7 @@ func newRuleDTO(r pricing.Rule) ruleDTO {
 }
 
 func (d ruleDTO) rule() pricing.Rule {
-	r := pricing.Rule{ID: d.ID, Name: d.Name, Percent: d.Percent, MemberOnly: d.MemberOnly, Active: d.Active}
+	r := pricing.Rule{ID: d.ID, Name: strings.TrimSpace(d.Name), Percent: d.Percent, MemberOnly: d.MemberOnly, Active: d.Active}
 	for _, c := range d.Bundle {
 		r.Bundle = append(r.Bundle, pricing.Component{ItemCode: c.ItemCode, Qty: c.Qty})
 	}
