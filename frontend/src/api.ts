@@ -17,6 +17,8 @@ export type Breakdown = {
   total: number
 }
 
+export type AdminItem = MenuItem & { active: boolean }
+
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const res = await fetch(path, init)
   if (!res.ok) {
@@ -36,6 +38,34 @@ export function calculate(items: OrderLine[], member: boolean): Promise<Breakdow
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ items, member }),
   })
+}
+
+export type Rule = {
+  id: number
+  name: string
+  itemCode: string
+  groupSize: number
+  percent: number
+  memberOnly: boolean
+  active: boolean
+}
+
+const json = { 'Content-Type': 'application/json' }
+
+export function fetchAdminMenu(): Promise<AdminItem[]> {
+  return request('/api/admin/menu')
+}
+
+export function createItem(item: AdminItem): Promise<AdminItem> {
+  return request('/api/admin/menu', { method: 'POST', headers: json, body: JSON.stringify(item) })
+}
+
+export function fetchRules(): Promise<Rule[]> {
+  return request('/api/admin/rules')
+}
+
+export function createRule(rule: Omit<Rule, 'id'>): Promise<Rule> {
+  return request('/api/admin/rules', { method: 'POST', headers: json, body: JSON.stringify(rule) })
 }
 
 export function formatTHB(satang: number): string {
