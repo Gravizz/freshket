@@ -69,7 +69,7 @@ type Claimer interface {
 var (
 	// ErrUnknownItem is returned when an order line references a code not on the menu.
 	ErrUnknownItem = errors.New("unknown item")
-	// ErrInvalidQuantity is returned when an order line has a negative quantity.
+	// ErrInvalidQuantity is returned when an order line has a negative quantity, or when a code's total exceeds MaxQuantity.
 	ErrInvalidQuantity = errors.New("invalid quantity")
 )
 

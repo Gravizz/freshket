@@ -73,7 +73,7 @@ A small web app. The customer picks quantities from the menu, toggles whether th
 - **Validation.** Order lines with an unknown item code, a negative quantity or a quantity above the cap are rejected with typed errors. Zero quantity lines are allowed and ignored. An empty order totals zero.
 - **Seed data.** Seven items (Red 50, Green 40, Blue 30, Yellow 50, Pink 80, Purple 90, Orange 120 THB per set) and the four seed rules, stored in SQLite. Schema creation and seeding run at startup and are safe to repeat: rules are seeded only when the rules table is empty, and menu items use insert-or-ignore, so edited rows are never overwritten. The schema changed with bundle rules (a `rule_items` table holds the components), so an old database file must be deleted.
 - **API contract.** `GET /api/menu` returns the active items with code, name, price. `POST /api/orders/calculate` accepts the items (code, quantity) and the member flag, and returns subtotal, discounts, and total. Validation errors return HTTP 400; unexpected errors return 500. Admin endpoints (menu and rules: list, create, update) live under `/api/admin`; a duplicate item code returns 409 and an update of a missing item or rule returns 404. Admin endpoints are intentionally unauthenticated because this is a simulation.
-- **Frontend.** A store screen: menu list with plus/minus controls, a member checkbox, and the breakdown panel. It recalculates through the API whenever the quantities or member flag change, ignores out-of-order responses, and shows API errors inline. It contains no pricing logic. A second screen at the `#/admin` route lists items and rules and has one form each to add an item or a rule; it shows server errors inline.
+- **Frontend.** A store screen: menu list with plus/minus controls, a member checkbox, and the breakdown panel. It recalculates through the API whenever the quantities or member flag change, ignores out-of-order responses, and shows API errors inline. It contains no pricing logic. A second screen at the `#/admin` route lists items and rules and has one form each to add an item or a rule; it shows server errors inline. Every item and rule row has an active switch that calls `PUT`. A new item's code is picked from a honeycomb tray of 37 colours (the colour's six hex digits become the code, and the store tints the item with it). The forms check the same limits as the server before sending (`validation.ts`) and lock while a save is in flight.
 - **Configuration.** Server port and database path come from environment variables with sensible defaults. The dev proxy target for the frontend is configurable.
 
 ## Testing Decisions
@@ -83,16 +83,16 @@ A small web app. The customer picks quantities from the menu, toggles whether th
 - **Pricing tests** are table-driven and cover the golden cases: Red+Green = 90.00; Red+Green member = 81.00; Orange ×5 = 576.00; Orange ×5 member = 518.40; Green ×2 + Pink ×3 = 308.00; empty order = 0.00. Add edges: odd quantities, mixed eligible items, non-eligible pairs, zero quantities, half-up rounding, unknown code, negative quantity.
 - **API tests** cover the menu listing (7 items), a successful calculation, and a 400 for an unknown item. They also pin the admin acceptance cases: add an item or a rule through the API and calculate with no restart, edit a price, deactivate an item or rule, and the validation table.
 - **Frontend tests** cover selecting an item and toggling member, then asserting that the request sent to the API and the rendered breakdown match; and the admin page adding an item (price converted to satang), building a bundle rule and a members-only whole-order rule, and showing a server error.
-- **Prior art.** The existing scaffold already contains the pricing table test, the in-process API tests, and the frontend component test; extend those rather than introduce new styles.
+- **Prior art.** Extend the existing pricing table test, in-process API tests and frontend component tests rather than introduce new styles.
 
 ## Out of Scope
 
 - Authentication and authorization (including for the admin page and API), and real member-card lookup or validation (the member flag is a user-supplied boolean).
 - Persisting orders, payment, receipts, or order history.
-- Deleting items or rules, and switching them off from the admin page (done through the API only).
+- Deleting items or rules. They are switched off with an active switch on the admin page (or `PUT`) instead.
 - Rule conditions other than bundle + members only (for example minimum totals or time windows), and fixed-amount discounts.
 - Mobile app, internationalization, and multi-currency support.
-- Deployment, CI, and containerization.
+- Production deployment and CI. A `docker compose up --build` setup (nginx serving the frontend and proxying `/api`) is provided only for running the app in one command.
 
 ## Further Notes
 

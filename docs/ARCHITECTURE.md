@@ -19,11 +19,14 @@ flowchart LR
         Root["Root<br/>hash route"]
         Store["App<br/>store page /"]
         Admin["Admin<br/>/#/admin"]
+        Helpers["validation.ts, itemColor.ts, Plate<br/>form checks, item colours"]
         API["api.ts<br/>fetch + formatTHB"]
         Root --> Store
         Root --> Admin
         Store --> API
         Admin --> API
+        Admin --> Helpers
+        Store --> Helpers
     end
 
     subgraph Server["Go backend (Fiber v3)"]
@@ -44,7 +47,7 @@ flowchart LR
 
     DB[("SQLite file<br/>freshket.db")]
 
-    API -- "JSON over /api<br/>Vite proxy in dev" --> HTTP
+    API -- "JSON over /api<br/>Vite proxy in dev, nginx in Docker" --> HTTP
     Menu --> DB
     Rules --> DB
 ```
@@ -57,7 +60,9 @@ flowchart LR
 | `internal/pricing` | `Calculator`, the `Discount` and `Claimer` interfaces, the data-driven `Rule` (bundle conditions), validation, rounding |
 | `internal/menu` | Menu items in SQLite: list active or all, create, update, seed |
 | `internal/rules` | Discount rules and their bundle components in SQLite: list active or all, create, update (in a transaction), seed |
-| `frontend/src` | `Root` (hash route + Admin/Store button), `App` (store), `Admin`, `api.ts` |
+| `frontend/src` | `Root` (hash route + Admin/Store button), `App` (store), `Admin`, `api.ts`, `validation.ts` (admin form checks mirroring the server limits), `itemColor.ts` and `Plate` (item colours and the honeycomb code tray) |
+
+`docker-compose.yml` runs the backend (SQLite file in a volume) and an nginx container that serves the built frontend and proxies `/api` to it, on port 3000.
 
 ## 2. ER diagram
 
@@ -197,7 +202,9 @@ flowchart TD
         R2 -- yes --> E1(["ErrInvalidQuantity"])
         R2 -- no --> R3{"code in active menu?"}
         R3 -- no --> E2(["ErrUnknownItem"])
-        R3 -- yes --> R4{"qty above 10000?"}
+        R3 -- yes --> RV{"item valid and<br/>code matches menu key?"}
+        RV -- no --> E3(["ErrInvalidItem"])
+        RV -- yes --> R4{"qty above 10000?"}
         R4 -- yes --> E1
         R4 -- no --> R5["merge lines with the same code"]
         R5 --> R6{"merged qty above 10000?"}
@@ -205,7 +212,9 @@ flowchart TD
         R6 -- no --> R7["drop codes with qty 0"]
     end
 
-    R7 --> Sub["subtotal = sum of price x qty"]
+    R7 --> Val{"any discount with Validate()<br/>returns an error?"}
+    Val -- yes --> E4(["ErrInvalidRule"])
+    Val -- no --> Sub["subtotal = sum of price x qty"]
     Sub --> Run["running total = subtotal"]
     Run --> Loop{"next discount?"}
     Loop -- yes --> Apply["Apply lines, member, running total"]
@@ -231,8 +240,10 @@ Bundle rules go first so the whole-order percent applies to the already-reduced 
 
 ```mermaid
 flowchart TD
-    S(["Apply lines, member, running total"]) --> M{"member_only and not member?"}
-    M -- yes --> No(["no discount"])
+    S(["Apply lines, member, running total"]) --> A{"inactive or invalid rule?"}
+    A -- yes --> No(["no discount"])
+    A -- no --> M{"member_only and not member?"}
+    M -- yes --> No
     M -- no --> K{"bundle empty?"}
 
     K -- "yes: whole order" --> W["amount = percentOf running total, percent"]

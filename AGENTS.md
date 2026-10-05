@@ -20,6 +20,8 @@ backend/
   internal/httpapi/  # Fiber handlers (httpapi.go public, admin_menu.go, admin_rules.go), DTOs
 frontend/
   src/               # menu picker, member toggle, price breakdown, /#/admin page
+docs/                # SPEC.md, ARCHITECTURE.md (diagrams), superpowers/plans (historical)
+docker-compose.yml   # one-command run: backend + nginx-served frontend (backend/ and frontend/ have Dockerfiles)
 README.md            # how to run, assumptions, design notes (reviewer-facing)
 ```
 
@@ -75,6 +77,7 @@ cd backend && go test ./...            # must pass before you finish
 cd backend && go run ./cmd/server      # API on :8080, creates/seeds SQLite file on first run (delete freshket.db after schema changes)
 cd frontend && npm run dev             # Vite dev server, proxies /api → :8080
 cd frontend && npm test                # Vitest + React Testing Library
+docker compose up --build              # whole app on :3000 (admin at /#/admin); reset with docker compose down -v
 ```
 
 ## Testing
