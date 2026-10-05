@@ -19,9 +19,35 @@ func testMenu() pricing.Menu {
 	}
 	m := pricing.Menu{}
 	for _, it := range items {
+		it.Active = true
 		m[it.Code] = it
 	}
 	return m
+}
+
+func TestCalculateRejectsInvalidItems(t *testing.T) {
+	tests := []struct {
+		name    string
+		item    pricing.Item
+		wantErr error
+	}{
+		{"inactive", pricing.Item{Code: "RED", Name: "Red set", Price: 5000}, pricing.ErrUnknownItem},
+		{"negative price", pricing.Item{Code: "RED", Name: "Red set", Price: -5000, Active: true}, pricing.ErrInvalidItem},
+		{"zero price", pricing.Item{Code: "RED", Name: "Red set", Active: true}, pricing.ErrInvalidItem},
+		{"over-limit price", pricing.Item{Code: "RED", Name: "Red set", Price: pricing.MaxPrice + 1, Active: true}, pricing.ErrInvalidItem},
+		{"empty name", pricing.Item{Code: "RED", Price: 5000, Active: true}, pricing.ErrInvalidItem},
+		{"invalid code", pricing.Item{Code: "red", Name: "Red set", Price: 5000, Active: true}, pricing.ErrInvalidItem},
+		{"mismatched code", pricing.Item{Code: "GREEN", Name: "Red set", Price: 5000, Active: true}, pricing.ErrInvalidItem},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, err := pricing.NewCalculator().Calculate(pricing.Menu{"RED": tt.item},
+				pricing.Order{Lines: []pricing.Line{{Code: "RED", Qty: 1}}})
+			if !errors.Is(err, tt.wantErr) {
+				t.Errorf("Calculate() error = %v, want %v", err, tt.wantErr)
+			}
+		})
+	}
 }
 
 func TestCalculateRejectsInvalidLines(t *testing.T) {

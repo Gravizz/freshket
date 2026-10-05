@@ -54,6 +54,7 @@ type Breakdown struct {
 
 // Discount is one promotion. Apply returns the discount for the order given
 // the running total after earlier discounts, and false when it does not apply.
+// A discount with a Validate() error method is validated before calculation.
 type Discount interface {
 	Apply(lines []PricedLine, member bool, runningTotal Money) (AppliedDiscount, bool)
 }
@@ -85,11 +86,19 @@ func NewCalculator(discounts ...Discount) *Calculator {
 // MaxQuantity is the most sets of a single item one order may contain.
 const MaxQuantity = 10_000
 
-// Calculate prices the order against the menu.
+// Calculate prices the order against the menu. Ordered items must be active
+// and valid; discounts that expose Validate are checked before any are applied.
 func (c *Calculator) Calculate(menu Menu, order Order) (Breakdown, error) {
 	lines, err := resolve(menu, order.Lines)
 	if err != nil {
 		return Breakdown{}, err
+	}
+	for _, d := range c.discounts {
+		if v, ok := d.(interface{ Validate() error }); ok {
+			if err := v.Validate(); err != nil {
+				return Breakdown{}, err
+			}
+		}
 	}
 	b := Breakdown{Discounts: []AppliedDiscount{}}
 	for _, l := range lines {
@@ -120,8 +129,14 @@ func resolve(menu Menu, lines []Line) ([]PricedLine, error) {
 			return nil, fmt.Errorf("%w: %d for %q", ErrInvalidQuantity, l.Qty, l.Code)
 		}
 		item, ok := menu[l.Code]
-		if !ok {
+		if !ok || !item.Active {
 			return nil, fmt.Errorf("%w: %q", ErrUnknownItem, l.Code)
+		}
+		if err := item.Validate(); err != nil {
+			return nil, err
+		}
+		if item.Code != l.Code {
+			return nil, fmt.Errorf("%w: menu code %q does not match item code %q", ErrInvalidItem, l.Code, item.Code)
 		}
 		if l.Qty > MaxQuantity {
 			return nil, fmt.Errorf("%w: %d for %q exceeds %d", ErrInvalidQuantity, l.Qty, l.Code, MaxQuantity)

@@ -4,14 +4,25 @@ import { displayCode } from './itemColor'
 import Plate from './Plate'
 import { MAX_QUANTITY } from './validation'
 
+type OrderState = { quantities: Record<string, number>; member: boolean }
+
 export default function App() {
   const [menu, setMenu] = useState<MenuItem[] | null>(null)
-  const [quantities, setQuantities] = useState<Record<string, number>>({})
-  const [member, setMember] = useState(false)
-  const [breakdown, setBreakdown] = useState<Breakdown | null>(null)
-  const [error, setError] = useState<string | null>(null)
+  const [order, setOrder] = useState<OrderState>({ quantities: {}, member: false })
+  const { quantities, member } = order
+  const [calculation, setCalculation] = useState<{
+    order: OrderState
+    breakdown: Breakdown | null
+    error: string | null
+  } | null>(null)
   const [menuError, setMenuError] = useState<string | null>(null)
   const [notice, setNotice] = useState<string | null>(null)
+
+  // Only show a result for the exact basket that produced it.
+  const current = calculation?.order === order ? calculation : null
+  const breakdown = current?.breakdown ?? null
+  const error = current?.error ?? null
+  const pending = current === null
 
   const loadMenu = () =>
     fetchMenu()
@@ -29,6 +40,7 @@ export default function App() {
 
   useEffect(() => {
     let ignore = false
+    const { quantities, member } = order
     const items = Object.entries(quantities)
       .filter(([, qty]) => qty > 0)
       .map(([code, qty]) => ({ code, qty }))
@@ -36,15 +48,13 @@ export default function App() {
     calculate(items, member)
       .then((b) => {
         if (!ignore) {
-          setBreakdown(b)
-          setError(null)
+          setCalculation({ order, breakdown: b, error: null })
         }
       })
       .catch((e: Error) => {
         if (ignore) return
         // A stale total beside an error would mislead, so show only the error.
-        setBreakdown(null)
-        setError(e.message)
+        setCalculation({ order, breakdown: null, error: e.message })
         // The menu may have changed under the basket (an item was taken off):
         // resync it and drop the sets that can no longer be ordered.
         fetchMenu()
@@ -55,7 +65,7 @@ export default function App() {
             const kept = Object.entries(quantities).filter(([code]) => known.has(code))
             if (kept.length < Object.keys(quantities).length) {
               setNotice('Some sets are no longer on the menu and were removed from your basket.')
-              setQuantities(Object.fromEntries(kept))
+              setOrder({ ...order, quantities: Object.fromEntries(kept) })
             }
           })
           .catch(() => {})
@@ -63,11 +73,14 @@ export default function App() {
     return () => {
       ignore = true
     }
-  }, [quantities, member])
+  }, [order])
 
   const setQty = (code: string, qty: number) => {
     setNotice(null)
-    setQuantities((q) => ({ ...q, [code]: Math.min(MAX_QUANTITY, Math.max(0, qty)) }))
+    setOrder((previous) => ({
+      ...previous,
+      quantities: { ...previous.quantities, [code]: Math.min(MAX_QUANTITY, Math.max(0, qty)) },
+    }))
   }
 
   const lines = (menu ?? [])
@@ -156,7 +169,7 @@ export default function App() {
         </section>
 
         <aside className="space-y-5 lg:sticky lg:top-24">
-          <MemberCard checked={member} onChange={setMember} />
+          <MemberCard checked={member} onChange={(member) => setOrder((previous) => ({ ...previous, member }))} />
 
           {error && (
             <p role="alert" className="rounded-xl bg-red-50 px-4 py-3 text-sm text-red-700 ring-1 ring-red-200">
@@ -169,7 +182,7 @@ export default function App() {
             </p>
           )}
 
-          <div id="order-summary" className="scroll-mt-24 drop-shadow-[0_18px_30px_rgb(0_77_61/0.12)]">
+          <div id="order-summary" aria-busy={pending} className="scroll-mt-24 drop-shadow-[0_18px_30px_rgb(0_77_61/0.12)]">
             <div className="receipt-tear rounded-t-2xl bg-white px-6 pt-6 pb-10">
               <div className="flex items-center justify-between">
                 <h2 className="font-display text-lg font-semibold text-fk-900">Order summary</h2>
@@ -178,7 +191,7 @@ export default function App() {
                     type="button"
                     onClick={() => {
                       setNotice(null)
-                      setQuantities({})
+                      setOrder((previous) => ({ ...previous, quantities: {} }))
                     }}
                     className="rounded-md px-2 py-1 text-xs font-medium text-ink/50 transition hover:bg-mint hover:text-fk-700"
                   >
@@ -209,6 +222,12 @@ export default function App() {
                     </li>
                   ))}
                 </ul>
+              )}
+
+              {pending && (
+                <p role="status" className="mt-5 border-t border-dashed border-ink/15 pt-4 text-sm text-ink/60">
+                  Calculating…
+                </p>
               )}
 
               {breakdown && (

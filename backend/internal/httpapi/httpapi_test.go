@@ -46,6 +46,54 @@ func newTestApp(t *testing.T) *fiber.App {
 	return httpapi.New(menuRepo, rulesRepo)
 }
 
+func TestCalculateRejectsInvalidStoredPricing(t *testing.T) {
+	tests := []struct {
+		name    string
+		query   string
+		message string
+	}{
+		{"negative item price", `UPDATE menu_items SET price = -5000 WHERE code = 'RED'`, "invalid item"},
+		{"invalid rule percent", `UPDATE discount_rules SET percent = 200 WHERE id = 4`, "invalid rule"},
+		{"zero bundle quantity", `UPDATE rule_items SET qty = 0 WHERE item_code = 'ORANGE'`, "invalid rule"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			db, err := sql.Open("sqlite", ":memory:")
+			if err != nil {
+				t.Fatal(err)
+			}
+			db.SetMaxOpenConns(1)
+			t.Cleanup(func() { db.Close() })
+			menuRepo, rulesRepo := menu.NewRepository(db), rules.NewRepository(db)
+			for _, migrate := range []func(context.Context) error{menuRepo.Migrate, rulesRepo.Migrate} {
+				if err := migrate(context.Background()); err != nil {
+					t.Fatal(err)
+				}
+			}
+			// Bypass admin validation to pin the calculator's own error boundary.
+			if _, err := db.Exec(tt.query); err != nil {
+				t.Fatal(err)
+			}
+			app := httpapi.New(menuRepo, rulesRepo)
+			req := httptest.NewRequest(http.MethodPost, "/api/orders/calculate",
+				strings.NewReader(`{"items":[{"code":"RED","qty":1}],"member":true}`))
+			req.Header.Set("Content-Type", "application/json")
+			resp, err := app.Test(req, testConfig)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer resp.Body.Close()
+			body, err := io.ReadAll(resp.Body)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if resp.StatusCode != http.StatusBadRequest || !strings.Contains(string(body), tt.message) {
+				t.Errorf("response = %d %s, want 400 containing %q", resp.StatusCode, body, tt.message)
+			}
+		})
+	}
+}
+
 func TestListMenu(t *testing.T) {
 	app := newTestApp(t)
 

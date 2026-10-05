@@ -36,10 +36,13 @@ Then open the URL Vite prints. Vite proxies `/api` to `:8080`, or to `API_URL` w
 
 ```bash
 cd backend && go test ./...
+go vet ./...
 ```
 
 ```bash
 cd frontend && npm test
+npm run lint
+npm run build
 ```
 
 ## API
@@ -77,12 +80,13 @@ Ordering 2 × Green and 1 × Red now shows `Bundle A ×1 (12%)` −฿15.60 and 
 - **Quantity cap**: at most 10,000 sets of one item per order, so totals cannot overflow. The store's `+` button stops at the cap.
 - **Input checks**: the server validates every request (item code, name 1–60 characters, price ฿0.01–฿1,000,000, rule percent 1–100, bundle quantities 1–10,000, no repeated item in a bundle) and trims the padding off names. The admin page checks the same limits first and shows the message under the field after a failed submit, so a typo never needs a round trip. Prices are read from the typed digits (`45`, `45.5`, `45.50`); `12abc`, `1e3`, `1,50` and a third decimal are rejected rather than guessed at. The colour tray greys out colours already used as item codes, a bundle cannot list the same item twice, and the submit buttons and switches lock while a save is in flight so a double click cannot add a rule twice.
 - **Stale baskets**: if an item is taken off the menu while a customer holds it in the basket, the failed price check refreshes the menu, drops that set from the basket and says so, rather than leaving the customer on a permanent error.
+- **Pending prices**: changing the basket or member flag hides the previous breakdown and shows “Calculating…” until the current request completes. Responses from older requests are ignored.
 - **Money**: amounts are integer satang end to end. A percentage that produces a fraction of a satang rounds half-up at each discount step.
 
 ## Design
 
 Diagrams (architecture, ER, request flows, calculation logic) are in [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 
-- `internal/pricing` is pure domain logic with no HTTP or DB imports, so it is unit-tested in isolation.
+- `internal/pricing` is pure domain logic with no HTTP or DB imports, so it is unit-tested in isolation. `Calculate` validates ordered items (including active status and matching menu codes) and discount rules even when called directly, returning `ErrUnknownItem`, `ErrInvalidItem`, or `ErrInvalidRule` for invalid input. `Rule.Apply` skips inactive or invalid rules; the small `Discount` interface stays unchanged, and discounts with a `Validate() error` method are checked by the calculator.
 - Each promotion implements the `pricing.Discount` interface, and the `Calculator` applies them in order. `pricing.Rule` is the data-driven implementation, loaded from SQLite on every calculation. **To add a promotion**, add a rule on `/#/admin` or through `POST /api/admin/rules`; no code changes. A new kind of condition (for example a minimum total) would be a new `Discount` type; one that uses up sets would also implement `Claimer`.
 - The backend is the single source of truth for prices. The frontend only displays the returned breakdown.

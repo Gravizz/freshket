@@ -136,7 +136,7 @@ func TestMemberOnlyBundle(t *testing.T) {
 }
 
 func TestBundleRoundsHalfUp(t *testing.T) {
-	menu := pricing.Menu{"X": {Code: "X", Name: "X set", Price: 1010}}
+	menu := pricing.Menu{"X": {Code: "X", Name: "X set", Price: 1010, Active: true}}
 	rule := pricing.Rule{ID: 1, Name: "x", Percent: 5, Active: true, Bundle: []pricing.Component{{ItemCode: "X", Qty: 1}}}
 
 	got, err := calcFor(rule).Calculate(menu, pricing.Order{Lines: []pricing.Line{{Code: "X", Qty: 1}}})

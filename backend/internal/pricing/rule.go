@@ -30,9 +30,10 @@ type Rule struct {
 	Active     bool
 }
 
-// Apply implements Discount.
+// Apply implements Discount, skipping inactive or invalid rules.
+// Calculator returns validation errors before calling Apply.
 func (r Rule) Apply(lines []PricedLine, member bool, runningTotal Money) (AppliedDiscount, bool) {
-	if r.MemberOnly && !member {
+	if !r.Active || r.Validate() != nil || (r.MemberOnly && !member) {
 		return AppliedDiscount{}, false
 	}
 	if len(r.Bundle) == 0 {
@@ -58,6 +59,9 @@ func (r Rule) Apply(lines []PricedLine, member bool, runningTotal Money) (Applie
 
 // Claim implements Claimer: it removes the sets the rule's bundles cover.
 func (r Rule) Claim(lines []PricedLine) []PricedLine {
+	if !r.Active || r.Validate() != nil {
+		return lines
+	}
 	n := r.bundles(lines)
 	if n == 0 {
 		return lines

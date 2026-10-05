@@ -110,7 +110,8 @@ func (h *handler) calculate(c fiber.Ctx) error {
 	}
 
 	b, err := pricing.NewCalculator(pricing.Discounts(active)...).Calculate(byCode, order)
-	if errors.Is(err, pricing.ErrUnknownItem) || errors.Is(err, pricing.ErrInvalidQuantity) {
+	if errors.Is(err, pricing.ErrUnknownItem) || errors.Is(err, pricing.ErrInvalidQuantity) ||
+		errors.Is(err, pricing.ErrInvalidItem) || errors.Is(err, pricing.ErrInvalidRule) {
 		return fiber.NewError(fiber.StatusBadRequest, err.Error())
 	}
 	if err != nil {

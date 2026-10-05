@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from '@testing-library/react'
+import { act, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import App from './App'
@@ -86,7 +86,7 @@ describe('App', () => {
     vi.mocked(api.calculate).mockRejectedValueOnce(new Error('unknown item: "RED"'))
     await user.click(screen.getByRole('button', { name: 'Add Red set' }))
 
-    expect(await screen.findByRole('status')).toHaveTextContent('no longer on the menu')
+    expect(await screen.findByText(/no longer on the menu/)).toBeInTheDocument()
     expect(screen.queryByRole('button', { name: 'Add Red set' })).not.toBeInTheDocument()
     await waitFor(() => expect(api.calculate).toHaveBeenLastCalledWith([], false))
   })
@@ -103,5 +103,55 @@ describe('App', () => {
 
     expect(await screen.findByRole('alert')).toHaveTextContent('Cannot reach the server.')
     expect(screen.queryByText('฿45.00')).not.toBeInTheDocument()
+    expect(screen.queryByText(/Calculating/)).not.toBeInTheDocument()
+  })
+
+  it.each(['quantity', 'member'] as const)('hides the old breakdown while a %s change is being calculated', async (change) => {
+    const user = userEvent.setup()
+    vi.mocked(api.calculate).mockResolvedValue({
+      subtotal: 5000, discounts: [{ label: 'Old promo', amount: 500 }], total: 4500,
+    })
+    render(<App />)
+    await user.click(await screen.findByRole('button', { name: 'Add Red set' }))
+    expect(await screen.findByText('฿45.00')).toBeInTheDocument()
+
+    let resolve!: (value: api.Breakdown) => void
+    vi.mocked(api.calculate).mockReturnValueOnce(new Promise((done) => { resolve = done }))
+    await user.click(screen.getByRole(change === 'quantity' ? 'button' : 'checkbox', {
+      name: change === 'quantity' ? 'Add Red set' : 'Member card',
+    }))
+
+    expect(screen.getByRole('status')).toHaveTextContent('Calculating')
+    expect(screen.queryByText('฿45.00')).not.toBeInTheDocument()
+    expect(screen.queryByText('Old promo')).not.toBeInTheDocument()
+    const summary = within(screen.getByRole('complementary'))
+    expect(summary.queryByText('Subtotal')).not.toBeInTheDocument()
+    expect(summary.queryByText('Total')).not.toBeInTheDocument()
+
+    await act(async () => resolve({ subtotal: 10000, discounts: [], total: 10000 }))
+    expect(screen.getAllByText('฿100.00')).toHaveLength(2)
+    expect(screen.queryByText(/Calculating/)).not.toBeInTheDocument()
+  })
+
+  it('keeps waiting for the newest basket when an older request finishes', async () => {
+    const user = userEvent.setup()
+    render(<App />)
+    await user.click(await screen.findByRole('button', { name: 'Add Red set' }))
+
+    let resolveOld!: (value: api.Breakdown) => void
+    let resolveNew!: (value: api.Breakdown) => void
+    vi.mocked(api.calculate)
+      .mockReturnValueOnce(new Promise((done) => { resolveOld = done }))
+      .mockReturnValueOnce(new Promise((done) => { resolveNew = done }))
+    await user.click(screen.getByRole('button', { name: 'Add Red set' }))
+    await user.click(screen.getByRole('button', { name: 'Add Red set' }))
+
+    await act(async () => resolveOld({ subtotal: 10000, discounts: [], total: 10000 }))
+    expect(screen.getByRole('status')).toHaveTextContent('Calculating')
+    expect(screen.queryByText('฿100.00')).not.toBeInTheDocument()
+
+    await act(async () => resolveNew({ subtotal: 15000, discounts: [], total: 15000 }))
+    expect(screen.getAllByText('฿150.00')).toHaveLength(2)
+    expect(screen.queryByText(/Calculating/)).not.toBeInTheDocument()
   })
 })
