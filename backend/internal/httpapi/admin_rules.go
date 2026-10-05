@@ -75,7 +75,7 @@ func (h *handler) updateRule(c fiber.Ctx) error {
 		}
 		return err
 	}
-	return c.JSON(body)
+	return c.JSON(newRuleDTO(body.rule()))
 }
 
 // checkRule validates the rule and that every item of its bundle is on the menu.

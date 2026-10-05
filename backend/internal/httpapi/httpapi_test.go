@@ -609,3 +609,12 @@ func TestRejectedBundleStoresNothing(t *testing.T) {
 		t.Errorf("rules = %s, want only the 4 seeded rules", listRaw)
 	}
 }
+
+func TestAdminRuleUpdateWithoutBundleReturnsEmptyBundle(t *testing.T) {
+	app := newTestApp(t)
+
+	resp, raw := adminRequest(t, app, http.MethodPut, "/api/admin/rules/4", `{"name":"Member 10%","percent":10,"memberOnly":true,"active":true}`)
+	if resp.StatusCode != http.StatusOK || !strings.Contains(raw, `"bundle":[]`) {
+		t.Errorf("update = %d %s, want 200 with \"bundle\":[]", resp.StatusCode, raw)
+	}
+}
